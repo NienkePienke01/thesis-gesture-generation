@@ -61,7 +61,7 @@ The project utilizes two primary JSON configuration files to manage the data pip
 #### training_params
 * **lr_base (0.0003)**: The starting learning rate for the Adam optimizer.
 * **grad_norm (1.0)**: The threshold for **gradient clipping**. This prevents "exploding gradients" which can occur during the complex kinematic calculations of the vertex loss.
-* **"batch_size"**
+* **batch_size**
 * **epochs**
 * **decay_epochs**
 
