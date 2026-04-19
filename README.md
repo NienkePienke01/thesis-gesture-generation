@@ -81,7 +81,7 @@ This project uses `uv` to install the environment use
 ```bash
 uv sync
 ```
-Afterwards, make sure to add the smplx body models to the smpl_models folder!
+Afterwards, make sure to add the smpl-x and smpl-h body models to the smpl_models folder!
 
 ### Follow these commands in to prepare data and begin training:
 * **Download specific subsets of the dataset using filters.** `uv run python -m seamless_downloading.seamless_downloader --download_name validation_testing --filter_dict '{"label": "naturalistic", "split": "dev"}' --preferred_vendors True --force_pairs True --num_samples 2 --random_draw True --seed 42`
