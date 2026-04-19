@@ -50,11 +50,11 @@ The project utilizes two primary JSON configuration files to manage the data pip
 * **val_lmdb**: the path to the validation lmdb, relative to the project root
 
 #### model_params for the VAE
-* **nb_code (256)**: The codebook size
-* **code_dim (256)**: The dimensionality of the latent embeddings stored in the codebook
+* **nb_code**: The codebook size
+* **code_dim**: The dimensionality of the latent embeddings stored in the codebook
 * **output_emb_width**:
-* **down_t (2)**: the temporal compression factor.
-* **depth (3)**: the number of residual blocks within each ResNet layer
+* **down_t**: the temporal compression factor.
+* **depth**: the number of residual blocks within each ResNet layer
 * **stride_t**
 * **width**
 * **depth**
@@ -62,16 +62,16 @@ The project utilizes two primary JSON configuration files to manage the data pip
 * **activation**
 
 #### training_params
-* **lr_base (0.0003)**: The starting learning rate for the Adam optimizer.
-* **grad_norm (1.0)**: The threshold for **gradient clipping**. This prevents "exploding gradients" which can occur during the complex kinematic calculations of the vertex loss.
+* **lr_base**: The starting learning rate for the Adam optimizer.
+* **grad_norm**: The threshold for **gradient clipping**. This prevents "exploding gradients" which can occur during the complex kinematic calculations of the vertex loss.
 * **batch_size**
 * **epochs**
 * **decay_epochs**
 
 #### loss_weights
-* **rec_weight (1)**: The multiplier for reconstruction-related losses.
-* **rec_pos_weight (1)**: The specific weight for **Geodesic Loss**
-* **rec_ver_weight (1)**: The weight for the **Vertex Loss**
+* **rec_weight**: The multiplier for reconstruction-related losses.
+* **rec_pos_weight**: The specific weight for **Geodesic Loss**
+* **rec_ver_weight**: The weight for the **Vertex Loss**
 ---
 
 ## Setup and Installation
