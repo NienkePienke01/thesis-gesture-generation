@@ -1,0 +1,28 @@
+[project]
+name = "mpi-project"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.8.20"
+dependencies = [
+    "cffi>=1.17.1",
+    "einops>=0.8.1",
+    "gradio>=4.44.1",
+    "ipykernel>=6.29.5",
+    "librosa>=0.11.0",
+    "lmdb>=2.1.1",
+    "loguru>=0.7.3",
+    "omegaconf>=2.3.0",
+    "open3d>=0.19.0",
+    "opencv-python>=4.13.0.92",
+    "pandas>=2.0.3",
+    "pyarrow>=17.0.0",
+    "pyrender>=0.1.45",
+    "smplx>=0.1.28",
+    "torch<2.5",
+    "transformers>=4.46.3",
+    "wget>=3.2",
+]
+[tool.setuptools.packages.find]
+include = ["data_processing*"]
+exclude = ["cache*", "data*", "configs*", "visualisation*"]

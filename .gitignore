@@ -1,0 +1,33 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Smpl models
+smpl_models/**/*.npz
+smpl_models/**/*.pkl
+
+# Data downloading
+data/seamless/downloads/
+cache/segmenter/
+*.mdb
+
+# Ignore local csv filtered files
+cache/csv_filtering_cache/
+*.log
+
+# Ignore checkpoints
+checkpoints/*.bin
+*.pth
+*.pt
+
+# Os files
+.DS_Store
+Thumbs.db
+*:Zone.Identifier
