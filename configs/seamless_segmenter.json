@@ -2,7 +2,7 @@
     "pose_fps": 30,
     "audio_sr": 16000,
     "pose_length": 64,
-    "stride": 64,
+    "stride": 64, 
     "seed": 42,
     "max_gb": 1,
     "clean_first_seconds": 0,

@@ -46,11 +46,12 @@ class SeamlessDownloader:
                 filtered_df = filtered_df[filtered_df[column] == value]
         
         # save to cache for future use
-        filtered_df.to_csv(cache_file, index=False)
-        print(f"Created new filter cache: {cache_file.name} ({len(filtered_df)} items)")
+        if not filtered_df.empty:
+            filtered_df.to_csv(cache_file, index=False)
+            print(f"Created new filter cache: {cache_file.name} ({len(filtered_df)} items)")
         return filtered_df, str(cache_file)
 
-    def download_subset(self, filters=None, csv_path=None, num_samples=None, preferred_vendors=True, random_draw=False, force_pairs=False, seed=42):
+    def download_subset(self, filters=None, csv_path=None, num_samples=None, preferred_vendors=True, random_draw=False, force_pairs=False, seed=42, file_list_only=False):
         """
         Downloads a batch of files based on a filter dictionary or a direct CSV path.
         Filters would be in the same notation as mentioned in def get_filtered_list
@@ -67,6 +68,9 @@ class SeamlessDownloader:
         
         if filtered_df.empty:
             print("Warning: No files found to download.")
+            return []
+
+        if file_list_only:
             return []
 
         # Configure the seamless connection using information from the first row of the df
@@ -140,6 +144,7 @@ def main():
     parser.add_argument("--num_samples", default=True, type=int, help="the number of samples to download")
     parser.add_argument("--random_draw", default=True, type=bool, help="If we randomly draw")
     parser.add_argument("--seed", default=None, type=int, help="The seed, which is relevant if random_draw is True")
+    parser.add_argument("--file_list_only", default=False, type=bool, help="If you only want the filelist to be created, and not commit to a full download")
     cli_args = parser.parse_args()
 
     filter_dict = json.loads(cli_args.filter_dict)
@@ -147,7 +152,8 @@ def main():
     downloader = SeamlessDownloader(download_name=cli_args.download_name)
     downloader.download_subset(filters=filter_dict, num_samples=cli_args.num_samples, random_draw=cli_args.random_draw, 
                                force_pairs=cli_args.force_pairs, preferred_vendors=cli_args.preferred_vendors,
-                               seed=cli_args.seed)
+                               seed=cli_args.seed,
+                               file_list_only=cli_args.file_list_only)
 
 if __name__ == "__main__":
     main()

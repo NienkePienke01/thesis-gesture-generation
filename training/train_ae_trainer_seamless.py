@@ -17,6 +17,7 @@ def train_model(args):
     """
     trainer = SeamlessStage1Trainer(args)
     
+    print("Setting up data loaders...")
     train_dataset = SeamlessDataLoader(args.data.train_lmdb, stage=1)
     train_loader = DataLoader(train_dataset, batch_size=args.training_params.batch_size, shuffle=True)
     validation_dataset = SeamlessDataLoader(args.data.val_lmdb, stage=1)
@@ -24,6 +25,7 @@ def train_model(args):
     
     best_validation_loss = float('inf')
     # training loop
+    print("Starting training loop...")
     for epoch in range(args.training_params.epochs):
         train_log_loss = 0
         progress_bar = tqdm(train_loader, desc=f"Epoch {epoch}", unit="batch")
@@ -40,7 +42,7 @@ def train_model(args):
         avg_train_loss = train_log_loss / len(train_loader)
         avg_validation_loss = validation_log_loss / len(validation_loader)
         
-        print(f"Epoch {epoch} out of {args.training_params.epochs} Complete | Avg Train: {avg_train_loss:.4f} | Avg Val: {avg_validation_loss:.4f}")
+        print(f"Epoch {epoch+1} out of {args.training_params.epochs} Complete | Avg Train: {avg_train_loss:.4f} | Avg Val: {avg_validation_loss:.4f}")
         
         # save the best checkpoint
         if avg_validation_loss < best_validation_loss:
@@ -50,6 +52,8 @@ def train_model(args):
             print(f"Saved new best model to {save_path}")
 
         trainer.scheduler.step()
+    
+    print("Finished training...")
 
 def main():
     if not checkpoint_dir.exists():
