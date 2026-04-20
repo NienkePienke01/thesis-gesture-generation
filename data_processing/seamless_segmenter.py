@@ -229,7 +229,7 @@ class SeamlessSegmenter:
         if no emotion_scores are present, we default to using 5 being Neutral
         """
         emotion_scores = loader.meta_data.emotion_scores
-        return np.argmax(emotion_scores, axis=1).astype(np.int32) if emotion_scores is not None else np.zeros(loader.num_frames, dtype=np.float32)
+        return np.argmax(emotion_scores, axis=1).astype(np.int32) if emotion_scores is not None else np.full(loader.num_frames, 5, dtype=np.int32)
 
     def _get_frame_semantics(self, loader : SeamlessSMPLHLoader):
         """
