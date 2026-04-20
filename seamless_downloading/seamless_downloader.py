@@ -25,14 +25,14 @@ class SeamlessDownloader:
         self.filelist_df = pd.read_csv(self.filelist_path)
         self.download_name = download_name
 
-    def get_filtered_list(self, filters: dict):
+    def get_filtered_list(self, filters: dict, preferred_vendors: bool):
         """
         Filters the dataframe and saves/loads a cached CSV named after the filter criteria.
         Example filters: {'has_annotation_1p': True, 'label': 'naturalistic', 'split': 'train'}
         """
         # create a filename based on the provided filter
         filter_str = "_".join([f"{k}-{v}" for k, v in sorted(filters.items())])
-        cache_file = self.cache_dir / f"list_{filter_str}.csv"
+        cache_file = self.cache_dir / f"list_{filter_str}_pv-{preferred_vendors}.csv"
         
         # See if the csv already exists based on the filename, if so we dont need to create it
         if cache_file.exists():
@@ -45,23 +45,32 @@ class SeamlessDownloader:
             if column in filtered_df.columns:
                 filtered_df = filtered_df[filtered_df[column] == value]
         
+        if preferred_vendors:
+            preferred = ["V00", "V01"] # smaller file sizes (grabbed from seamless interaction fs.py file)
+            filtered_df = filtered_df[filtered_df['file_id'].str.startswith(tuple(preferred))]
+            print(f"Applied vendor filter: {len(filtered_df)} items remaining.")
+        
         # save to cache for future use
         if not filtered_df.empty:
             filtered_df.to_csv(cache_file, index=False)
             print(f"Created new filter cache: {cache_file.name} ({len(filtered_df)} items)")
         return filtered_df, str(cache_file)
 
-    def download_subset(self, filters=None, csv_path=None, num_samples=None, preferred_vendors=True, random_draw=False, force_pairs=False, seed=42, file_list_only=False):
+    def download_subset(self, filters=None, csv_paths=None, num_samples=None, preferred_vendors=True, random_draw=False, force_pairs=False, seed=42, file_list_only=False, num_workers=None):
         """
         Downloads a batch of files based on a filter dictionary or a direct CSV path.
         Filters would be in the same notation as mentioned in def get_filtered_list
         """
-        if csv_path:
-            print(f"Using provided CSV path: {csv_path}")
-            filtered_df = pd.read_csv(csv_path)
-            active_csv = csv_path
-        elif filters:
-            filtered_df, active_csv = self.get_filtered_list(filters)
+        if csv_paths:
+            print(f"Using provided CSV paths: {csv_paths}")
+            df_list = [pd.read_csv(PROJECT_ROOT / path) for path in csv_paths]
+            filtered_df = pd.concat(df_list, ignore_index=True)
+            filtered_df = filtered_df.drop_duplicates()
+            cache_file = self.cache_dir / f"merged_file_list_{self.download_name}.csv"
+            filtered_df.to_csv(cache_file, index=False)
+            active_csv = str(cache_file)
+        elif filters != None:
+            filtered_df, active_csv = self.get_filtered_list(filters, preferred_vendors)
         else:
             print("Error: Either filters or csv_path must be provided.")
             return []
@@ -74,12 +83,11 @@ class SeamlessDownloader:
             return []
 
         # Configure the seamless connection using information from the first row of the df
-        sample = filtered_df.iloc[0]
         config = DatasetConfig(
-            label=sample['label'], 
-            split=sample['split'], 
-            preferred_vendors_only=preferred_vendors
+            preferred_vendors_only=preferred_vendors,
+            num_workers=num_workers
         )
+        print(f"Config loaded with {config.num_workers} workers")
         
         fs = SeamlessInteractionFS(config=config, filelist_path=active_csv)
 
@@ -138,22 +146,28 @@ def main():
     """Use this to setup your download, afterwards run this file to download"""
     parser = argparse.ArgumentParser()
     parser.add_argument("--download_name", default="unknown", type=str, help="The name of this download")
-    parser.add_argument("--filter_dict", default={}, type=str, help="JSON string of the filter dict")
-    parser.add_argument("--preferred_vendors", default=True, type=bool, help="If we want to download from preferred vendors")
-    parser.add_argument("--force_pairs", default=True, type=bool, help="If we want to force pairs, implying we always want the interaction partner downloaded too")
-    parser.add_argument("--num_samples", default=True, type=int, help="the number of samples to download")
-    parser.add_argument("--random_draw", default=True, type=bool, help="If we randomly draw")
+    parser.add_argument("--filter_dict", default=None, type=str, help="JSON string of the filter dict")
+    parser.add_argument("--no_preferred_vendors", action="store_false", dest="preferred_vendors", default=True, help="If we want to not download from preferred vendors (smaller file sizes)")
+    parser.add_argument("--no_force_pairs", action="store_false", dest="force_pairs", default=True, help="If we want to not force pairs, implying we always want the interaction partner downloaded too")
+    parser.add_argument("--num_samples", default=-1, type=int, help="the number of samples to download")
+    parser.add_argument("--no_random_draw", action="store_false", dest="random_draw", default=True, help="If we want to not randomly draw")
     parser.add_argument("--seed", default=None, type=int, help="The seed, which is relevant if random_draw is True")
-    parser.add_argument("--file_list_only", default=False, type=bool, help="If you only want the filelist to be created, and not commit to a full download")
+    parser.add_argument("--file_list_only",action="store_true", dest="file_list_only", default=False, help="If you only want the filelist to be created, and not commit to a full download")
+    parser.add_argument("--csv_paths", default=None, nargs="+", type=str, help="one or more CSV paths separated by spaces, to not use a filter_list but paths instead")
+    parser.add_argument("--num_workers", default=None, type=int, help="amount of workers for the downloading process, leaving this empty will auto detect")
     cli_args = parser.parse_args()
-
-    filter_dict = json.loads(cli_args.filter_dict)
+    
+    if cli_args.filter_dict != None:
+        filter_dict = json.loads(cli_args.filter_dict)
+    else:
+        filter_dict = cli_args.filter_dict
 
     downloader = SeamlessDownloader(download_name=cli_args.download_name)
     downloader.download_subset(filters=filter_dict, num_samples=cli_args.num_samples, random_draw=cli_args.random_draw, 
                                force_pairs=cli_args.force_pairs, preferred_vendors=cli_args.preferred_vendors,
                                seed=cli_args.seed,
-                               file_list_only=cli_args.file_list_only)
+                               file_list_only=cli_args.file_list_only,
+                               csv_paths=cli_args.csv_paths)
 
 if __name__ == "__main__":
     main()
