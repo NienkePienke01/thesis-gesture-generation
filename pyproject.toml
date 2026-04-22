@@ -22,6 +22,8 @@ dependencies = [
     "torch<2.5",
     "transformers>=4.46.3",
     "wget>=3.2",
+    "PyOpenGL>=3.1.7",
+    "PyOpenGL-accelerate>=3.1.7",
 ]
 [tool.setuptools.packages.find]
 include = ["data_processing*"]
