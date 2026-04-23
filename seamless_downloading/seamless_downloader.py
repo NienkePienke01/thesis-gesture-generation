@@ -56,7 +56,8 @@ class SeamlessDownloader:
             print(f"Created new filter cache: {cache_file.name} ({len(filtered_df)} items)")
         return filtered_df, str(cache_file)
 
-    def download_subset(self, filters=None, csv_paths=None, num_samples=None, preferred_vendors=True, random_draw=False, force_pairs=False, seed=42, file_list_only=False, num_workers=None):
+    def download_subset(self, filters=None, csv_paths=None, num_samples=None, preferred_vendors=True, random_draw=False, 
+                        force_pairs=False, seed=42, file_list_only=False, num_workers=None, skip_videos=False):
         """
         Downloads a batch of files based on a filter dictionary or a direct CSV path.
         Filters would be in the same notation as mentioned in def get_filtered_list
@@ -117,7 +118,8 @@ class SeamlessDownloader:
             file_ids = selection_pool
 
         print(f"Starting download of {len(file_ids)} interactions to {self.output_dir}...")
-        fs.download_batch_from_s3(file_ids, local_dir=self.output_dir)
+        skip_videos = not skip_videos # Quick inversion of the boolean, to fit the include_video standards
+        fs.download_batch_from_s3(file_ids, local_dir=self.output_dir, include_video=skip_videos)
         
         # Generate the meta data for this dataset
         meta_info = filters if filters else {"source_csv": Path(active_csv).name}
@@ -155,6 +157,7 @@ def main():
     parser.add_argument("--file_list_only",action="store_true", dest="file_list_only", default=False, help="If you only want the filelist to be created, and not commit to a full download")
     parser.add_argument("--csv_paths", default=None, nargs="+", type=str, help="one or more CSV paths separated by spaces, to not use a filter_list but paths instead")
     parser.add_argument("--num_workers", default=None, type=int, help="amount of workers for the downloading process, leaving this empty will auto detect")
+    parser.add_argument("--skip_videos",action="store_true", dest="skip_videos", default=False, help="If you do not want to download any videos")
     cli_args = parser.parse_args()
     
     if cli_args.filter_dict != None:
@@ -167,7 +170,8 @@ def main():
                                force_pairs=cli_args.force_pairs, preferred_vendors=cli_args.preferred_vendors,
                                seed=cli_args.seed,
                                file_list_only=cli_args.file_list_only,
-                               csv_paths=cli_args.csv_paths)
+                               csv_paths=cli_args.csv_paths,
+                               skip_videos=cli_args.skip_videos)
 
 if __name__ == "__main__":
     main()

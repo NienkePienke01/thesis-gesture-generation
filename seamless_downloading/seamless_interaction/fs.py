@@ -710,6 +710,7 @@ class SeamlessInteractionFS:
         *,
         num_workers: int | None = None,
         local_dir: str | None = None,
+        include_video: bool = True
     ) -> None:
         """Download and organize all data for a file ID from S3."""
         if num_workers is None:
@@ -753,6 +754,7 @@ class SeamlessInteractionFS:
                                 target_path,
                                 shared_np_data,
                                 shared_json_data,
+                                include_video,
                                 lock,
                             )
                             for f in files
@@ -786,6 +788,7 @@ class SeamlessInteractionFS:
         batch: list[str],
         local_dir: str | None = None,
         num_workers: int | None = None,
+        include_video: bool = True
     ) -> bool:
         """Download a batch of file IDs from S3."""
         if local_dir is None:
@@ -797,7 +800,7 @@ class SeamlessInteractionFS:
 
         for file_id in batch:
             self.gather_file_id_data_from_s3(
-                file_id, num_workers=num_workers, local_dir=local_dir
+                file_id, num_workers=num_workers, local_dir=local_dir, include_video=include_video
             )
 
         logger.info(f"Completed downloading batch of {len(batch)} files")
@@ -931,6 +934,7 @@ class SeamlessInteractionFS:
         target_path: str,
         shared_np_data: dict,
         shared_json_data: dict,
+        include_video: bool,
         lock,
     ) -> None:
         """Download a single file from S3 and process it."""
@@ -959,7 +963,7 @@ class SeamlessInteractionFS:
                 if not self._dry_run:
                     shutil.move(tmp_file_path, target_file)
 
-            elif filename.endswith(".mp4"):
+            elif filename.endswith(".mp4") and include_video:
                 # Copy video file directly
                 target_file = os.path.join(target_path, filename.replace("video_", ""))
                 if not self._dry_run:
