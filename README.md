@@ -83,6 +83,15 @@ uv sync
 ```
 Afterwards, make sure to add the smpl-x and smpl-h body models to the smpl_models folder!
 
+#### On the cluster
+UV sync does not work on the cluster directly, because of environment settings. Therefore run the pre created .sh file
+And NOT run uv sync directly.
+```bash
+./uv_sync_cluster.sh
+```
+If the above command says permission denied. Then make the file executable with: `chmod u+x uv_sync_cluster.sh`
+Just make sure you are the owner of the file by checking with `ls -l uv_sync_cluster.sh` first.
+
 ### Follow these commands in to prepare data and begin training:
 * **Download specific subsets of the dataset using filters.** `uv run python -m seamless_downloading.seamless_downloader --download_name validation_testing --filter_dict '{"label": "naturalistic", "split": "dev"}' --no_preferred_vendors --no_force_pairs --num_samples 2 --no_random_draw --seed 42`
 * **Convert raw files into LMDB format for training access** `uv run -m data_processing.seamless_segmenter --dataset_path data/seamless/downloads/validation_testing --config configs/seamless_segmenter.json`
