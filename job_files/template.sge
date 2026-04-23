@@ -1,0 +1,17 @@
+#!/bin/sh
+#$ -N Download_Dataset # The name of the job
+#$ -wd /data/clusterfs/mld/users/davwer/SIGGRAGH_2024/SemGesture/GestureLSM  # log directory
+#$ -o /data/clusterfs/mld/users/davwer/SIGGRAGH_2024/SemGesture/log_track_lsm/hom_vis/train_log.txt                 # Path to the output log file
+#$ -e /data/clusterfs/mld/users/davwer/SIGGRAGH_2024/SemGesture/log_track_lsm/hom_vis/train_error.txt
+#$ -q mld.q@gridnode016.mpi.nl                          # The cluster node
+#$ -M david.werkhoven@mpi.nl                           # Mail address
+#$ -S /bin/bash
+module purge
+module load gcc/11.4.0
+module load cuda/12.1
+module load ffmpeg
+
+source /data/scratch/anaconda3/bin/activate
+conda activate hosem
+
+CUDA_VISIBLE_DEVICES=0 python test_vis_2.py --ddp False -c /data/clusterfs/mld/users/lanliu/SIGGRAGH_2024/SemGesture/GestureLSM/configs/holisem_shortcut_rvqvae_test.yaml

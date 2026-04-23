@@ -101,7 +101,7 @@ class SeamlessSegmenter:
                         "pose": sample_pose.numpy(), # pose segment of 129 dimension
                         "audio": sample_audio, # audio segment
                         "bert": sample_bert, # word segments
-                        "emotions": sample_emotions, # placeholder emo
+                        "emotions": sample_emotions, # seamless interaction categories 0-7 mentioned in the helper function
                         "semantic_scores": sample_semantic_values, # semantic values for each frame being 0.0, 0.1 or 1.0
                         "sample_word": sample_word_text, # the actual words in text for each frame of the sample
                         "sample_sentence": sample_sentence, # the sentence for each frame, where the word came from
