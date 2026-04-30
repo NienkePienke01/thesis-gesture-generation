@@ -6,5 +6,6 @@
     "seed": 42,
     "max_gb": 1,
     "clean_first_seconds": 0,
-    "clean_final_seconds": 0
+    "clean_final_seconds": 0,
+    "segment_mode": "both"
 }

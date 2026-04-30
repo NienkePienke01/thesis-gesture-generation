@@ -18,7 +18,7 @@ cache_dir = PROJECT_ROOT / "cache" / "segmenter"
 
 class SeamlessSegmenter:
     def __init__(self, dataset : SeamlessDataset, pose_fps=30, audio_sr=16000, pose_length=64, stride=10, seed=42, max_gb=10,
-                 clean_first_seconds=0, clean_final_seconds=0):
+                 clean_first_seconds=0, clean_final_seconds=0, segment_mode='both'):
         self.dataset = dataset
         self.output_path = cache_dir / f"{self.dataset.name}"
         self.pose_fps = pose_fps
@@ -29,6 +29,7 @@ class SeamlessSegmenter:
 
         self.clean_first = clean_first_seconds
         self.clean_final = clean_final_seconds
+        self.segment_mode = segment_mode # Can be, one of the following [both, listening, speaking] (segments the frames to only get that data)
 
         np.random.seed(seed)
         torch.manual_seed(seed)

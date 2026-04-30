@@ -26,7 +26,7 @@ import pandas as pd
 import wget
 from huggingface_hub import HfApi, HfFileSystem, hf_hub_download
 
-from ..seamless_interaction.constants import ALL_FEATURES
+from ..seamless_interaction.constants import ALL_FEATURES, ALL_FEATURES_FOR_TRAINING
 from ..seamless_interaction.utils import recursively_cast_to_float32, setup_logging
 
 logger = setup_logging(__name__)
@@ -672,6 +672,53 @@ class SeamlessInteractionFS:
 
         return paths
 
+    def get_path_list_for_file_id_s3_data_preparation(self, file_id: str, has_annotations = False, has_imitator_movement = False) -> list[str]:
+        """Get S3 paths for all modalities of a file ID. But only the ones needed for data preparation for training"""
+        if self._cached_filelist is None:
+            self._load_filelist_cache()
+
+        file_entry = self._cached_filelist[self._cached_filelist["file_id"] == file_id]
+        if file_entry.empty:
+            raise ValueError(f"File ID {file_id} not found in dataset")
+
+        label, split = file_entry.iloc[0][["label", "split"]]
+
+        # Build S3 URLs for all modalities
+        base_url = f"https://{self._bucket}/{self._prefix}"
+        paths = []
+
+        # Audio and video
+        paths.extend(
+            [
+                f"{base_url}/{label}/{split}/audio/{file_id}.wav",
+                # f"{base_url}/{label}/{split}/video/{file_id}.mp4",
+            ]
+        )
+
+        # Features (NPY files)
+        checklist = ["smplh", "boxes_and_keypoints", "movement", "movement_V4"] if has_imitator_movement else ["smplh", "boxes_and_keypoints"]
+        for feature_group, features in ALL_FEATURES_FOR_TRAINING.items():
+            if feature_group in checklist:
+                for feature in features:
+                    paths.append(
+                        f"{base_url}/{label}/{split}/{feature_group}/{feature}/{file_id}.npy"
+                    )
+
+        # Metadata (JSONL files)
+        for metadata_type in ALL_FEATURES["metadata"]:
+            paths.append(
+                f"{base_url}/{label}/{split}/metadata/{metadata_type}/{file_id}.jsonl"
+            )
+
+        # Annotations (JSON files) - optional
+        if has_annotations:
+            for annotation_type in ALL_FEATURES["annotations"]:
+                paths.append(
+                    f"{base_url}/{label}/{split}/annotations/{annotation_type}/{file_id}.json"
+                )
+
+        return paths
+
     def get_path_list_for_file_id_local(self, file_id: str) -> list[str]:
         """Get local paths for all modalities of a file ID."""
         if self._cached_filelist is None:
@@ -710,7 +757,7 @@ class SeamlessInteractionFS:
         *,
         num_workers: int | None = None,
         local_dir: str | None = None,
-        include_video: bool = True
+        training_features_only = False
     ) -> None:
         """Download and organize all data for a file ID from S3."""
         if num_workers is None:
@@ -719,11 +766,17 @@ class SeamlessInteractionFS:
             local_dir = self.config.local_dir
         if local_dir is None:
             raise ValueError("Please configure local_dir")
+        
+        file_entry = self._cached_filelist[self._cached_filelist["file_id"] == file_id]
 
-        files = self.get_path_list_for_file_id_s3(file_id)
+        if training_features_only:
+            has_annotation = (file_entry[['has_annotation_1p', 'has_annotation_3p']].iloc[0] == 1).any()
+            has_movement = (file_entry['has_imitator_movement'].iloc[0] == 1)
+            files = self.get_path_list_for_file_id_s3_data_preparation(file_id, has_annotation, has_movement)
+        else:
+            files = self.get_path_list_for_file_id_s3(file_id)
         logger.info(f"Found {len(files)} files for {file_id}")
 
-        file_entry = self._cached_filelist[self._cached_filelist["file_id"] == file_id]
         label, split, batch_idx, archive_idx = file_entry.iloc[0][
             ["label", "split", "batch_idx", "archive_idx"]
         ]
@@ -754,7 +807,6 @@ class SeamlessInteractionFS:
                                 target_path,
                                 shared_np_data,
                                 shared_json_data,
-                                include_video,
                                 lock,
                             )
                             for f in files
@@ -788,7 +840,7 @@ class SeamlessInteractionFS:
         batch: list[str],
         local_dir: str | None = None,
         num_workers: int | None = None,
-        include_video: bool = True
+        training_features_only = False
     ) -> bool:
         """Download a batch of file IDs from S3."""
         if local_dir is None:
@@ -800,7 +852,7 @@ class SeamlessInteractionFS:
 
         for file_id in batch:
             self.gather_file_id_data_from_s3(
-                file_id, num_workers=num_workers, local_dir=local_dir, include_video=include_video
+                file_id, num_workers=num_workers, local_dir=local_dir, training_features_only=training_features_only
             )
 
         logger.info(f"Completed downloading batch of {len(batch)} files")
@@ -934,7 +986,6 @@ class SeamlessInteractionFS:
         target_path: str,
         shared_np_data: dict,
         shared_json_data: dict,
-        include_video: bool,
         lock,
     ) -> None:
         """Download a single file from S3 and process it."""
@@ -963,7 +1014,7 @@ class SeamlessInteractionFS:
                 if not self._dry_run:
                     shutil.move(tmp_file_path, target_file)
 
-            elif filename.endswith(".mp4") and include_video:
+            elif filename.endswith(".mp4"):
                 # Copy video file directly
                 target_file = os.path.join(target_path, filename.replace("video_", ""))
                 if not self._dry_run:

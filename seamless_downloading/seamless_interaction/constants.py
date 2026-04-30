@@ -70,5 +70,47 @@ ALL_FEATURES: Final = {
         "3P-V",
     ],  # json (optional)
 }
+ALL_FEATURES_FOR_TRAINING: Final = {
+    "smplh": [  # npy
+        "body_pose",
+        "global_orient",
+        "is_valid",
+        "left_hand_pose",
+        "right_hand_pose",
+        "translation",
+    ],
+    "boxes_and_keypoints": [  # npy
+        "box",
+        "is_valid_box",
+        "keypoints",
+    ],
+    "movement": [  # npy
+        "EmotionArousalToken",
+        "emotion_valence",
+        "EmotionValenceToken",
+        "emotion_arousal",
+        "is_valid",
+        "emotion_scores",
+    ],
+    "movement_v4": [  # npy
+        "emotion_scores",
+        "emotion_valence",
+        "emotion_arousal",
+        "EmotionValenceToken",
+        "EmotionArousalToken",
+        "is_valid",
+    ],
+    "metadata": [  # json
+        "transcript",  # (optional)
+        "vad",  # (required)
+    ],
+    "annotations": [
+        "1P-IS",
+        "1P-R",
+        "3P-IS",
+        "3P-R",
+        "3P-V",
+    ],  # json (optional)
+}
 # Regular expression to parse file IDs from filenames
 FILE_ID_REGEX = r"V(\d+)_S(\d+)_I(\d+)_P(\d+)"  # <vendor_id>_<session_id>_<interaction_id>_<participant_id>

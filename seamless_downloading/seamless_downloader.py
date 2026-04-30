@@ -57,7 +57,7 @@ class SeamlessDownloader:
         return filtered_df, str(cache_file)
 
     def download_subset(self, filters=None, csv_paths=None, num_samples=None, preferred_vendors=True, random_draw=False, 
-                        force_pairs=False, seed=42, file_list_only=False, num_workers=None, skip_videos=False):
+                        force_pairs=False, seed=42, file_list_only=False, num_workers=None, training_features_only=False):
         """
         Downloads a batch of files based on a filter dictionary or a direct CSV path.
         Filters would be in the same notation as mentioned in def get_filtered_list
@@ -118,11 +118,11 @@ class SeamlessDownloader:
             file_ids = selection_pool
 
         print(f"Starting download of {len(file_ids)} interactions to {self.output_dir}...")
-        skip_videos = not skip_videos # Quick inversion of the boolean, to fit the include_video standards
-        fs.download_batch_from_s3(file_ids, local_dir=self.output_dir, include_video=skip_videos)
+        fs.download_batch_from_s3(file_ids, local_dir=self.output_dir, training_features_only=training_features_only)
         
         # Generate the meta data for this dataset
         meta_info = filters if filters else {"source_csv": Path(active_csv).name}
+        meta_info['training_features_only'] = training_features_only
         self.generate_metadata(file_ids, meta_info)
         
         return file_ids
@@ -150,14 +150,14 @@ def main():
     parser.add_argument("--download_name", default="unknown", type=str, help="The name of this download")
     parser.add_argument("--filter_dict", default=None, type=str, help="JSON string of the filter dict")
     parser.add_argument("--no_preferred_vendors", action="store_false", dest="preferred_vendors", default=True, help="If we want to not download from preferred vendors (smaller file sizes)")
-    parser.add_argument("--no_force_pairs", action="store_false", dest="force_pairs", default=True, help="If we want to not force pairs, implying we always want the interaction partner downloaded too")
+    parser.add_argument("--no_force_pairs", action="store_false", dest="force_pairs", default=True, help="If we want to not force pairs, implying we DONT always want the interaction partner downloaded too")
     parser.add_argument("--num_samples", default=-1, type=int, help="the number of samples to download")
     parser.add_argument("--no_random_draw", action="store_false", dest="random_draw", default=True, help="If we want to not randomly draw")
     parser.add_argument("--seed", default=None, type=int, help="The seed, which is relevant if random_draw is True")
     parser.add_argument("--file_list_only",action="store_true", dest="file_list_only", default=False, help="If you only want the filelist to be created, and not commit to a full download")
     parser.add_argument("--csv_paths", default=None, nargs="+", type=str, help="one or more CSV paths separated by spaces, to not use a filter_list but paths instead")
     parser.add_argument("--num_workers", default=None, type=int, help="amount of workers for the downloading process, leaving this empty will auto detect")
-    parser.add_argument("--skip_videos",action="store_true", dest="skip_videos", default=False, help="If you do not want to download any videos")
+    parser.add_argument("--training_features_only",action="store_true", dest="training_features_only", default=False, help="If you only want to download features for training")
     cli_args = parser.parse_args()
     
     if cli_args.filter_dict != None:
@@ -171,7 +171,7 @@ def main():
                                seed=cli_args.seed,
                                file_list_only=cli_args.file_list_only,
                                csv_paths=cli_args.csv_paths,
-                               skip_videos=cli_args.skip_videos)
+                               training_features_only=cli_args.training_features_only)
 
 if __name__ == "__main__":
     main()

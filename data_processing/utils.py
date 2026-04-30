@@ -97,7 +97,7 @@ def get_seamless_meta_data(base_path, data):
     #
     if data != None:
         meta_data.keypoints = data.get('boxes_and_keypoints:keypoints', None)
-        meta_data.emotion_scores = data.get('movement_v4:emotion_scores', None)
+        meta_data.emotion_scores = data.get('movement_v4:emotion_scores', data.get('movement:emotion_scores', None))
     return meta_data
 
 def prune_seamless_npz_file(input_path, frames, output_folder):
