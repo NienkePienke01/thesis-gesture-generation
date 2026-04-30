@@ -63,7 +63,6 @@ class SeamlessDataset:
         total_seconds = total_frames / 30
         return round(total_seconds / 3600, 2)
 
-
     def __len__(self):
         return len(self.samples)
 

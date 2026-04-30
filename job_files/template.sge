@@ -1,4 +1,6 @@
 #!/bin/sh
+# qrsh -q mld.q@gridnode016 # To ssh into the cluster locally after run cd ../../data/scratch for the scratch folder (ssd)
+# nvidia-smi to see gpu usage
 #$ -N Download_Dataset # The name of the job
 #$ -wd /data/clusterfs/mld/users/davwer/SIGGRAGH_2024/SemGesture/GestureLSM  # log directory
 #$ -o /data/clusterfs/mld/users/davwer/SIGGRAGH_2024/SemGesture/log_track_lsm/hom_vis/train_log.txt                 # Path to the output log file
