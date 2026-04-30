@@ -2,6 +2,7 @@ import json
 import os
 from pathlib import Path
 from .utils import SeamlessSMPLHLoader
+import numpy as np
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -52,6 +53,16 @@ class SeamlessDataset:
         Returns a SeamlessSMPLHLoader for a specific sample.
         """
         return SeamlessSMPLHLoader(self.samples[index], **loader_args)
+    
+    def get_total_hours(self):
+        total_frames = 0
+        for path in self.samples.values():
+            data = np.load(path, allow_pickle=True)
+            total_frames += data['smplh:global_orient'].shape[0]
+            
+        total_seconds = total_frames / 30
+        return round(total_seconds / 3600, 2)
+
 
     def __len__(self):
         return len(self.samples)
@@ -61,6 +72,7 @@ class SeamlessDataset:
 
 def main():
     dataset = SeamlessDataset(PROJECT_ROOT / "data" / "seamless" / "downloads" / "experimenting")
+    print(f"The dataset is a total of {dataset.get_total_hours()} raw hours")
     print(dataset.get_interaction(dataset.file_ids[0], {'load_vertices': False, 'with_meta_data': True}))
 
 if __name__ == "__main__":
