@@ -97,3 +97,6 @@ Just make sure you are the owner of the file by checking with `ls -l uv_sync_clu
 * **Convert raw files into LMDB format for training access** `uv run -m data_processing.seamless_segmenter --dataset_path data/seamless/downloads/validation_testing --config configs/seamless_segmenter.json`
 * **Launch the Stage 1 training process.** `uv run -m training.train_ae_trainer_seamless --config configs/seamless_stage_1_upper_training.json`
 * **Run the Gradio interface to inspect/compare motions and videos** `uv run python -m visualisation.gradio_visualisation`
+
+For the MPI cluster you need to clear your PYTHONPATH so to run the uv command it is not simply `uv run python -m` but instead
+`env -u PYTHONPATH -u PYTHONHOME uv run python -m`
