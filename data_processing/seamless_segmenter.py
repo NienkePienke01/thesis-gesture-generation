@@ -78,6 +78,18 @@ class SeamlessSegmenter:
                     # motion segment
                     pose_start = i * self.stride
                     pose_end = pose_start + self.pose_length
+
+                    # semantic values segment
+                    sample_semantic_values = aligned_semantic_values[pose_start:pose_end]
+                    
+                    # Filter (if needed) to only listener or speaker frames. This works using the semantic values where 0.0 means there is no VAD
+                    if self.segment_mode != 'both':
+                        is_speaking = np.any(sample_semantic_values > 0.0)
+                        if self.segment_mode == 'speaking' and not is_speaking:
+                            continue
+                        elif self.segment_mode == 'listening' and is_speaking:
+                            continue
+
                     sample_pose = aligned_pose[pose_start:pose_end]
                     
                     # audio segment
@@ -93,9 +105,6 @@ class SeamlessSegmenter:
 
                     # emotion segment
                     sample_emotions = aligned_emotion_list[pose_start:pose_end]
-
-                    # semantic values segment
-                    sample_semantic_values = aligned_semantic_values[pose_start:pose_end]
 
                     # storage setup
                     entry = {

@@ -22,6 +22,9 @@ cache/segmenter/
 cache/csv_filtering_cache/
 *.log
 
+# Ignore cached videoos
+cache/video_cache/
+
 # Ignore checkpoints
 checkpoints/*.bin
 *.pth

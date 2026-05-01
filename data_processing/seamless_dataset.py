@@ -3,6 +3,8 @@ import os
 from pathlib import Path
 from .utils import SeamlessSMPLHLoader
 import numpy as np
+import cv2
+import random
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -55,6 +57,9 @@ class SeamlessDataset:
         return SeamlessSMPLHLoader(self.samples[index], **loader_args)
     
     def get_total_hours(self):
+        """
+        Returns the total raw hours this dataset contains
+        """
         total_frames = 0
         for path in self.samples.values():
             data = np.load(path, allow_pickle=True)
@@ -63,6 +68,29 @@ class SeamlessDataset:
         total_seconds = total_frames / 30
         return round(total_seconds / 3600, 2)
 
+    def get_screenshots_for_visual_evaluation(self):
+        """
+        Creates a folder, that contains 1 screenshot for each sample. This can be used for easy quick human visual evaluation of the quality of the data
+        """
+        folder_location = self.data_root / "screenshots"
+        folder_location.mkdir(parents=True, exist_ok=True)
+        for id in self.file_ids:
+            loader = self.get_interaction(id, {'load_vertices': False, 'with_meta_data': True})
+            video_path = loader.meta_data.video_file
+            if video_path != None:
+                cap = cv2.VideoCapture(str(video_path))
+                total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                random_frame = random.randint(0, total_frames - 1)
+
+                cap.set(cv2.CAP_PROP_POS_FRAMES, random_frame)
+                success, frame = cap.read()
+                
+                if success:
+                    screenshot_path = folder_location / f"{id}.png"
+                    cv2.imwrite(str(screenshot_path), frame)
+                cap.release()
+
+
     def __len__(self):
         return len(self.samples)
 
@@ -70,9 +98,13 @@ class SeamlessDataset:
         return f"SeamlessDataset(count={len(self.samples)}, criteria={self.filter_criteria})"
 
 def main():
-    dataset = SeamlessDataset(PROJECT_ROOT / "data" / "seamless" / "downloads" / "experimenting")
+    """
+    Used to do quick testing of this script
+    """
+    dataset = SeamlessDataset(PROJECT_ROOT / "data" / "seamless" / "downloads" / "observation")
     print(f"The dataset is a total of {dataset.get_total_hours()} raw hours")
-    print(dataset.get_interaction(dataset.file_ids[0], {'load_vertices': False, 'with_meta_data': True}))
+    dataset.get_screenshots_for_visual_evaluation()
+    # print(dataset.get_interaction(dataset.file_ids[0], {'load_vertices': False, 'with_meta_data': True}))
 
 if __name__ == "__main__":
     main()

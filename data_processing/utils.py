@@ -19,6 +19,11 @@ _relationships = pd.read_csv(_assets_dir / "relationships.csv", dtype=str)
 _filelist = pd.read_csv(_assets_dir / "filelist.csv", dtype=str)
 _interactions = pd.read_csv(_assets_dir / "interactions.csv", dtype=str)
 
+HAND_MAP = {
+    'left_hand': range(91, 112),
+    'right_hand': range(112, 133)
+}
+
 def split_full_id(full_id):
     """
     Simply splits the full id, into separate parts
@@ -66,6 +71,10 @@ def get_seamless_meta_data(base_path, data):
     audio_path = base_path.with_suffix('.wav')
     if audio_path.exists():
         meta_data.audio_file = audio_path
+    # Save the .mp4 video path
+    video_path = base_path.with_suffix('.mp4')
+    if video_path.exists():
+        meta_data.video_file = video_path
     #
     participant_data_row = _participants[(_participants['vendor_id'] == meta_data.vendor_id) & (_participants['participant_id'] == meta_data.participant_id)]
     if not participant_data_row.empty:
@@ -98,6 +107,34 @@ def get_seamless_meta_data(base_path, data):
     if data != None:
         meta_data.keypoints = data.get('boxes_and_keypoints:keypoints', None)
         meta_data.emotion_scores = data.get('movement_v4:emotion_scores', data.get('movement:emotion_scores', None))
+        meta_data.boxes = data.get('boxes_and_keypoints:box', None)
+        #
+        num_frames = len(meta_data.keypoints) if meta_data.keypoints is not None else 0
+        meta_data.movement_intensity = np.ones(num_frames, dtype=int) # Will be overwritten below if data is present
+        meta_data.hand_offscreen = np.zeros(num_frames, dtype=int) # Will be overwritten below if data is present
+        for prefix in HAND_MAP.keys():
+            setattr(meta_data, f"{prefix}_offscreen_percentage", np.zeros(num_frames))
+        #
+        if meta_data.keypoints is not None:
+            # Hand movement intensity detection
+            hand_indices = range(91, 133) # These are the hands based on coco wholebody
+            hand_coords = meta_data.keypoints[:, hand_indices, :2] # only use the x and y coords
+            displacements = np.linalg.norm(hand_coords[1:] - hand_coords[:-1], axis=2) # calculate movement (temporal variance)
+            intensity = np.mean(displacements, axis=1)
+            meta_data.movement_intensity = np.concatenate(([0], intensity))
+            # Hand off screen detection
+            if meta_data.boxes is not None:
+                limit_x = np.max(meta_data.boxes[:, [0, 2]])
+                limit_y = np.max(meta_data.boxes[:, [1, 3]])
+                offscreen_values = []
+                for prefix, indices in HAND_MAP.items():
+                    coords = meta_data.keypoints[:, indices, :2]
+                    off_boundary = (coords[..., 0] <= 0) | (coords[..., 0] >= limit_x) | (coords[..., 1] <= 0) | (coords[..., 1] >= limit_y)
+                    is_offscreen = np.mean(off_boundary, axis=1) # The percentage of off screen points
+                    setattr(meta_data, f"{prefix}_offscreen_percentage", is_offscreen)
+                    offscreen_values.append(np.any(off_boundary, axis=1)) # Create a 0/1 instead of percentage due to np.any
+                meta_data.hand_offscreen = (np.maximum.reduce(offscreen_values)).astype(int) # sets a frame to 0 if it is not offscreen for either hand and 1 if either hand has even 1 point offscreen
+
     return meta_data
 
 def prune_seamless_npz_file(input_path, frames, output_folder):
@@ -165,8 +202,14 @@ class SeamlessMetaData:
     has_annotation_1p : bool = False
     has_annotation_3p : bool = False
     audio_file : Path = None
+    video_file : Path = None
     keypoints : np.array = None
+    boxes : np.array = None
     emotion_scores : np.array = None
+    movement_intensity : np.array = None
+    hand_offscreen : np.array = None
+    left_hand_offscreen_percentage : np.array = None
+    right_hand_offscreen_percentage : np.array = None
 
 def get_smplx_model(device):
     if 'smplx' not in _model_cache:
