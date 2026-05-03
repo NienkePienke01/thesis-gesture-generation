@@ -1051,7 +1051,11 @@ class SeamlessInteractionFS:
                 # Process JSON annotations
                 if not self._dry_run:
                     with open(tmp_file_path, "r") as f:
-                        data = json.load(f)
+                        content = f.read()
+                        try:
+                            data = json.loads(content)
+                        except json.JSONDecodeError:
+                            data = [json.loads(line) for line in content.splitlines() if line.strip()]
 
                     # Extract annotation type from path
                     path_parts = url.split("/")
