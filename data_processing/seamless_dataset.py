@@ -4,6 +4,7 @@ from pathlib import Path
 from .utils import SeamlessSMPLHLoader
 import numpy as np
 import cv2
+import argparse
 import random
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -101,7 +102,11 @@ def main():
     """
     Used to do quick testing of this script
     """
-    dataset = SeamlessDataset(PROJECT_ROOT / "data" / "seamless" / "downloads" / "train_all_moi")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--dataset_path", default="data/seeamless/downloads/train_all_moi", type=str, help="The path to the dataset relative to the project root")
+    cli_args = parser.parse_args()
+
+    dataset = SeamlessDataset(PROJECT_ROOT / cli_args.dataset_path)
     print(f"The dataset is a total of {dataset.get_total_hours()} raw hours")
     # dataset.get_screenshots_for_visual_evaluation()
     print(dataset.get_interaction(dataset.file_ids[0], {'load_vertices': False, 'with_meta_data': True}).meta_data.emotion_scores)
