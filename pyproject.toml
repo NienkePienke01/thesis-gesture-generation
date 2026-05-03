@@ -11,7 +11,7 @@ dependencies = [
     "gradio>=4.44.1",
     "ipykernel>=6.29.5",
     "librosa>=0.11.0",
-    "lmdb>=2.1.1",
+    "lmdb==1.4.1",
     "loguru>=0.7.3",
     "omegaconf>=2.3.0",
     "open3d>=0.10.0,<0.13.0",
@@ -28,8 +28,7 @@ dependencies = [
 include = ["data_processing*"]
 exclude = ["cache*", "data*", "configs*", "visualisation*"]
 [tool.uv]
-config-settings = { lmdb = "--global-option=build_ext --global-option=--with-lmdb" }
-no-binary-package = ["lmdb"]
+config-settings = { lmdb = "--build-from-source" }
 required-environments = [
     "sys_platform == 'linux' and platform_machine == 'x86_64'"
 ]
