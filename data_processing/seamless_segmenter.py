@@ -6,12 +6,14 @@ import numpy as np
 import math
 from pathlib import Path
 from loguru import logger
-from tqdm import tqdm
 from .seamless_dataset import SeamlessDataset
 from .utils import SeamlessSMPLHLoader
 from transformers import AutoTokenizer, BertModel
 import json
 import argparse
+import torch.multiprocessing as mp
+import os
+from datetime import datetime
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 cache_dir = PROJECT_ROOT / "cache" / "segmenter"
@@ -19,14 +21,18 @@ cache_dir = PROJECT_ROOT / "cache" / "segmenter"
 class SeamlessSegmenter:
     def __init__(self, dataset : SeamlessDataset, pose_fps=30, audio_sr=16000, pose_length=64, stride=10, seed=42, max_gb=10,
                  clean_first_seconds=0, clean_final_seconds=0, segment_mode='both', 
-                 filter_out_of_screen_hands=False, keep_only_high_intensity_blocks=False, vad_padding_in_seconds=0):
+                 filter_out_of_screen_hands=False, keep_only_high_intensity_blocks=False, vad_padding_in_seconds=0, worker_id=-1):
         self.dataset = dataset
-        self.output_path = cache_dir / f"{self.dataset.name}"
+        if worker_id == -1:
+            self.output_path = cache_dir / f"{self.dataset.name}"
+        else:
+            self.output_path = cache_dir / f"{self.dataset.name}" / f"part_{worker_id}"
         self.pose_fps = pose_fps
         self.audio_sr = audio_sr
         self.pose_length = pose_length
         self.stride = stride
         self.max_gb = max_gb
+        self.worker_id = worker_id
 
         self.clean_first = clean_first_seconds
         self.clean_final = clean_final_seconds
@@ -34,7 +40,7 @@ class SeamlessSegmenter:
         self.filter_out_of_screen_hands = filter_out_of_screen_hands # used to filter out any frames where the hand is out of the screen (noise)
         self.keep_only_high_intensity_blocks = keep_only_high_intensity_blocks # This is only relevant for 'listener' segment mode, it will keep only high intensity VAD frames (VAD with movement)
         self.vad_padding_in_seconds = vad_padding_in_seconds # this is to not only grab the VAD section for the speaker mode but also pad it with the build up to the VAD
-        self.vad_padding_in_frames = self.vad_padding_in_seconds * self.pose_fps
+        self.vad_padding_in_frames = int(self.vad_padding_in_seconds * self.pose_fps)
         
         np.random.seed(seed)
         torch.manual_seed(seed)
@@ -51,8 +57,10 @@ class SeamlessSegmenter:
         env = lmdb.open(str(self.output_path), map_size=int(1024**3 * self.max_gb))
         
         sample_idx = 0
-        interaction_idx = 0
-        for _, _ in tqdm(self.dataset.samples.items(), desc="segmenting dataset"):
+        # Loop over each sample
+        total_samples = len(self.dataset.samples)
+        items = list(self.dataset.samples.items())
+        for interaction_idx, (file_id, _) in enumerate(items):
             # Get a seamless loader, of the data sample for easy access to all needed information
             loader = self.dataset.get_interaction(self.dataset.file_ids[interaction_idx], {'load_vertices': False, 'with_meta_data': True})
             
@@ -71,13 +79,14 @@ class SeamlessSegmenter:
             semantic_values_list = self._get_frame_semantics(loader)
             
             # align the audio and pose
-            aligned_pose, aligned_audio, aligned_words, aligned_emotion_list, aligned_semantic_values, aligned_off_screen_hand_values = self._align_data(full_pose, audio_data, word_list, emotion_category_frames, semantic_values_list)
+            aligned_pose, aligned_audio, aligned_words, aligned_emotion_list, aligned_semantic_values, aligned_off_screen_hand_values = self._align_data(full_pose, audio_data, word_list, emotion_category_frames, semantic_values_list, loader.meta_data.hand_offscreen)
 
             # see how many 64-frame chunks fit
             num_subdivisions = math.floor((len(aligned_pose) - self.pose_length) / self.stride) + 1
             audio_samples_per_frame = self.audio_sr / self.pose_fps # how many audio samples represent the duration of one motion frame
             audio_chunk_len = int(self.pose_length * audio_samples_per_frame) # chunk sizes for the audio compared
 
+            # Write to the database
             with env.begin(write=True) as transaction:
                 for i in range(num_subdivisions):
                     # motion segment
@@ -136,9 +145,15 @@ class SeamlessSegmenter:
                     serialized_entry = pickle.dumps(entry)
                     transaction.put(key, serialized_entry)
                     sample_idx += 1
-            interaction_idx +=1
+
+            # Logging
+            ten_percent_step = max(1, total_samples // 10)
+            if (interaction_idx + 1) % ten_percent_step == 0 or (interaction_idx + 1) == total_samples:
+                percent = int(((interaction_idx + 1) / total_samples) * 100)
+                logger.info(f"Worker {self.worker_id} | Progress: {percent}% | {interaction_idx + 1}/{total_samples} files")
+
         env.close()
-        logger.info(f"Finished. Total segments cached: {sample_idx}")
+        logger.info(f"Finished worker {self.worker_id}. Total segments cached: {sample_idx}")
 
     def _align_data(self, full_pose, audio_data, word_list, emotion_list, semantic_values_list, off_screen_hand_values):
         """
@@ -217,6 +232,8 @@ class SeamlessSegmenter:
             sentence_text = segment["transcript"]
             # encode sentence with BERT and get character offsets
             inputs = self.tokenizer(sentence_text, return_offsets_mapping=True, return_tensors="pt")
+            device = next(self.bert_model.parameters()).device
+            inputs = {k: v.to(device) for k, v in inputs.items()} # Move to device
             with torch.no_grad():
                 outputs = self.bert_model(**{k: v for k, v in inputs.items() if k != 'offset_mapping'})
             token_vecs = outputs.last_hidden_state.squeeze(0)
@@ -300,31 +317,146 @@ class SeamlessSegmenter:
                     sem_scores[max(0, start_frame):min(loader.num_frames, end_frame)] = 1.0
         return sem_scores
 
+def run_worker(worker_id, file_ids, config_data, dataset_path, gpu_id):
+    """Function that runs the segmenter on a worker."""
+    # Set logging for this specific worker
+    logger.info(f"Worker {worker_id} starting on GPU {gpu_id} with {len(file_ids)} files.")
+    device = torch.device(f"cuda:{gpu_id}")
+    
+    # Re-initialize the dataset and filter it to only this workers given file_ids
+    dataset = SeamlessDataset(PROJECT_ROOT / dataset_path, file_ids=file_ids)
+
+    segmenter = SeamlessSegmenter(dataset, worker_id=worker_id, **config_data)
+
+    segmenter.bert_model.to(device) # Make sure the bert_model is on the right device
+    
+    # run the segmentation
+    segmenter.build_cache()
+    logger.info(f"Worker {worker_id} finished.")
+
+    # short check to see if it all worked fine
+    env = lmdb.open(str(segmenter.output_path), readonly=True)
+    with env.begin() as transaction:
+        cursor = transaction.cursor()
+        if cursor.first():
+            _, raw = cursor.item()
+            entry = pickle.loads(raw)
+            logger.info(f"{dataset.name} Pose shape: {entry['pose'].shape}") # should be (64, 129)
+            logger.info(f"{dataset.name} Audio shape: {entry['audio'].shape}")
+            logger.info(f"{dataset.name} BERT shape: {entry['bert'].shape}") # should be (64, 768)
+            logger.info(f"{dataset.name} Emotions shape: {entry['emotions'].shape}")
+            logger.info(f"{dataset.name} Semantics shape: {entry['semantic_scores'].shape}")
+        else:
+            logger.error(f"Worker {worker_id} | Verification Failed: Database is empty/not found!")
+
+def merge_parts(dataset_name, config_data):
+    merged_path = PROJECT_ROOT / "cache" / "segmenter" / dataset_name
+    
+    # Prevent overwriting an existing merged dataset
+    if merged_path.exists() and any(merged_path.glob("*.lmdb")):
+        logger.warning(f"Master path {merged_path} already contains an LMDB. Skipping merge to prevent corruption.")
+        return
+    merged_path.mkdir(parents=True, exist_ok=True)
+    
+    # Create merged LMDB
+    map_size = int(config_data.get('max_gb', 10) * 1024**3)
+    merged_env = lmdb.open(str(merged_path), map_size=map_size)
+    global_idx = 0
+
+    # Find all part folders experimenting/part_0, experimenting/part_1
+    part_paths = sorted(list(merged_path.glob("part_*")))
+    
+    if not part_paths:
+        logger.error(f"No parts found for {dataset_name} in {merged_path.parent}")
+        return
+
+    logger.info(f"Merging {len(part_paths)} parts into cache folder...")
+
+    with merged_env.begin(write=True) as merged_txn:
+        temp_idx = 0
+        for part_path in part_paths:
+            part_env = lmdb.open(str(part_path), readonly=True)
+            stats = part_env.stat()
+            logger.info(f"This subset ({part_path.name}) has: {stats['entries']} entries")
+            with part_env.begin() as part_txn:
+                cursor = part_txn.cursor()
+                for _, value in cursor:
+                    # New global key 00000000, 00000001
+                    key = f"{global_idx:08d}".encode()
+                    merged_txn.put(key, value)
+                    temp_idx +=1
+                    global_idx += 1
+            part_env.close()
+            logger.info(f"Successfully merged {temp_idx} total segments from {part_path.name}")
+            temp_idx = 0
+
+    merged_env.close()
+    logger.info(f"Merge Complete. Final merged dataset at: {merged_path} (Total: {global_idx} segments)")
+
 def main():
     parser = argparse.ArgumentParser(description="Seamless Segmenter Parser")
     parser.add_argument("--dataset_path", type=str, default="data/seamless/downloads/experimenting", help="Path to the dataset folder")
     parser.add_argument("--config", type=str, default="configs/seamless_segmenter.json", help="Path to the segmenter config.json")
+    
+    parser.add_argument("--workers", type=int, default=None, help="Number of parallel workers")
+    parser.add_argument("--gpu_id", type=int, default=0, help="The ID of the gpu")
+
     cli_args = parser.parse_args()
     dataset = SeamlessDataset(PROJECT_ROOT / cli_args.dataset_path)
+    all_file_ids = dataset.file_ids
+    #
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+    log_path = PROJECT_ROOT / "logs" / f"segmenter_{dataset.name}_{timestamp}.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    logger.add(str(log_path), level="INFO")
+
+    num_workers = cli_args.workers if cli_args.workers else max(1, os.cpu_count() // 1)
+    logger.info(f"Initializing segmentation with {num_workers} workers on GPU {cli_args.gpu_id}")
 
     config_path = PROJECT_ROOT / cli_args.config 
     #
     with open(config_path, "r") as f:
         config_data = json.load(f)
-    segmenter = SeamlessSegmenter(dataset, **config_data)
-    segmenter.build_cache()
+    
+    # Filter out any keys that have 'comment' in the name
+    config_data = {k: v for k, v in config_data.items() if "comment" not in k.lower()}  
+    
+    separated_files = np.array_split(all_file_ids, num_workers)
 
-    # short check to see if it all worked fine
-    cache_path = str(PROJECT_ROOT / "cache" / "segmenter" / f"{dataset.name}")
-    env = lmdb.open(cache_path, readonly=True)
+    processes = []
+    for i in range(num_workers):
+        # The workers share the same GPU
+        process = mp.Process(
+            target=run_worker, 
+            args=(i, separated_files[i].tolist(), config_data, cli_args.dataset_path, cli_args.gpu_id)
+        )
+        process.start()
+        processes.append(process)
+
+    for process in processes:
+        process.join()
+
+    logger.info("All workers completed. Will now merge the LMDB folders in the cache directory.")
+
+    merge_parts(dataset.name, config_data)
+
+    output_path = PROJECT_ROOT / "cache" / "segmenter" / dataset.name
+    env = lmdb.open(str(output_path), readonly=True)
     with env.begin() as transaction:
-        raw = transaction.get(b"00000000")
-        entry = pickle.loads(raw)
-        print(f"Pose shape: {entry['pose'].shape}") # should be (64, 129)
-        print(f"Audio shape: {entry['audio'].shape}")
-        print(f"BERT shape: {entry['bert'].shape}") # should be (64, 768)
-        print(f"Emotions shape: {entry['emotions'].shape}")
-        print(f"Semantics shape: {entry['semantic_scores'].shape}")
+        stats = env.stat()
+        logger.info(f"Merged Dataset has: {stats['entries']} entries")
+        cursor = transaction.cursor()
+        if cursor.first():
+            _, raw = cursor.item()
+            entry = pickle.loads(raw)
+            logger.info(f"Merged First Entry Pose shape: {entry['pose'].shape}") # should be (64, 129)
+            logger.info(f"Merged First Entry Audio shape: {entry['audio'].shape}")
+            logger.info(f"Merged First Entry BERT shape: {entry['bert'].shape}") # should be (64, 768)
+            logger.info(f"Merged First Entry Emotions shape: {entry['emotions'].shape}")
+            logger.info(f"Merged First Entry Semantics shape: {entry['semantic_scores'].shape}")
+        else:
+            logger.error(f"Merged Dataset | Verification Failed: Database is empty/not found!")
 
 if __name__ == "__main__":
+    mp.set_start_method('spawn', force=True)
     main()

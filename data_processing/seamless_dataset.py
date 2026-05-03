@@ -10,7 +10,7 @@ import random
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 class SeamlessDataset:
-    def __init__(self, data_root: str):
+    def __init__(self, data_root: str, file_ids = None):
         """
         Initializes a sub seamless interaction dataset by reading the manifest and mapping file IDs to paths.
         data_root: The path to the that the dataset is in.
@@ -26,7 +26,11 @@ class SeamlessDataset:
             self.manifest = json.load(f)
 
         self.filter_criteria = self.manifest.get("filter_criteria", {})
-        self.file_ids = self.manifest.get("downloaded_ids", [])
+
+        if file_ids == None:
+            self.file_ids = self.manifest.get("downloaded_ids", [])
+        else:
+            self.file_ids = file_ids
         
         # Build the lookup table for easy access
         self.samples = self._build_path_map()
@@ -48,7 +52,7 @@ class SeamlessDataset:
         # return only the subset mentioned in the manifest
         final_map = {file_id: disk_map[file_id] for file_id in self.file_ids if file_id in disk_map}
         
-        print(f"Found {len(final_map)} files out of {self.manifest.get('count', 'Unknown')} successfully.")
+        print(f"Found {len(final_map)} files out of {len(self.file_ids)} successfully.")
         return final_map
 
     def get_interaction(self, index: int, loader_args: dict):
