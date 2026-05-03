@@ -108,7 +108,7 @@ class SeamlessDownloader:
             random.shuffle(selection_pool)
             print(f"Shuffling the selection pool.")
 
-        if num_samples:
+        if num_samples and num_samples != -1: # Use -1 to use all samples in the file
             selection_pool = selection_pool[:num_samples]
 
         if force_pairs:
