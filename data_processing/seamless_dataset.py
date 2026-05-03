@@ -104,7 +104,7 @@ def main():
     dataset = SeamlessDataset(PROJECT_ROOT / "data" / "seamless" / "downloads" / "train_all_moi")
     print(f"The dataset is a total of {dataset.get_total_hours()} raw hours")
     # dataset.get_screenshots_for_visual_evaluation()
-    # print(dataset.get_interaction(dataset.file_ids[0], {'load_vertices': False, 'with_meta_data': True}))
+    print(dataset.get_interaction(dataset.file_ids[0], {'load_vertices': False, 'with_meta_data': True}).meta_data.emotion_scores)
 
 if __name__ == "__main__":
     main()
