@@ -28,6 +28,7 @@ dependencies = [
 include = ["data_processing*"]
 exclude = ["cache*", "data*", "configs*", "visualisation*"]
 [tool.uv]
+no-binary-package = ["lmdb"]
 required-environments = [
     "sys_platform == 'linux' and platform_machine == 'x86_64'"
 ]
