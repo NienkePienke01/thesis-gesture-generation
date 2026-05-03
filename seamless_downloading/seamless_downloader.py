@@ -123,11 +123,11 @@ class SeamlessDownloader:
         # Generate the meta data for this dataset
         meta_info = filters if filters else {"source_csv": Path(active_csv).name}
         meta_info['training_features_only'] = training_features_only
-        self.generate_metadata(file_ids, meta_info)
+        self.generate_metadata(file_ids, meta_info, preferred_vendors, force_pairs, random_draw, training_features_only)
         
         return file_ids
 
-    def generate_metadata(self, file_ids, filters):
+    def generate_metadata(self, file_ids, filters, preferred_vendors, force_pairs, random_draw, training_features_only):
         """
         Saves a JSON manifest of what was downloaded for future reference
         """
@@ -137,7 +137,11 @@ class SeamlessDownloader:
             "filter_criteria": filters,
             "downloaded_ids": file_ids,
             "count": len(file_ids),
-            "status": "raw"
+            "status": "raw",
+            "preferred_vendors": preferred_vendors,
+            "force_pairs": force_pairs,
+            "random_draw": random_draw,
+            "training_features_only": training_features_only
         }
         
         with open(meta_path, 'w') as f:
