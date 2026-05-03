@@ -101,9 +101,9 @@ def main():
     """
     Used to do quick testing of this script
     """
-    dataset = SeamlessDataset(PROJECT_ROOT / "data" / "seamless" / "downloads" / "annotation_observation")
+    dataset = SeamlessDataset(PROJECT_ROOT / "data" / "seamless" / "downloads" / "train_all_moi")
     print(f"The dataset is a total of {dataset.get_total_hours()} raw hours")
-    dataset.get_screenshots_for_visual_evaluation()
+    # dataset.get_screenshots_for_visual_evaluation()
     # print(dataset.get_interaction(dataset.file_ids[0], {'load_vertices': False, 'with_meta_data': True}))
 
 if __name__ == "__main__":
