@@ -2,10 +2,16 @@
     "pose_fps": 30,
     "audio_sr": 16000,
     "pose_length": 64,
-    "stride": 64, 
+    "stride": 20, 
     "seed": 42,
     "max_gb": 1,
     "clean_first_seconds": 0,
     "clean_final_seconds": 0,
-    "segment_mode": "both"
+    "segment_mode": "both",
+    "_comment_": "This can be 0 or 1, and is used to filter out any frames where the hand is out of the screen (noise)",
+    "filter_out_of_screen_hands": 0,
+    "_comment": "Can be 0 or 1, This is only relevant for listener segment mode, it will keep only high intensity VAD frames (VAD with movement)",
+    "keep_only_high_intensity_blocks": 0,
+    "__comment": "The VAD padding in seconds, this is to not only grab the VAD section for the speaker mode but also pad it with the build up to the VAD",
+    "vad_padding_in_seconds": 1
 }

@@ -18,7 +18,8 @@ cache_dir = PROJECT_ROOT / "cache" / "segmenter"
 
 class SeamlessSegmenter:
     def __init__(self, dataset : SeamlessDataset, pose_fps=30, audio_sr=16000, pose_length=64, stride=10, seed=42, max_gb=10,
-                 clean_first_seconds=0, clean_final_seconds=0, segment_mode='both'):
+                 clean_first_seconds=0, clean_final_seconds=0, segment_mode='both', 
+                 filter_out_of_screen_hands=False, keep_only_high_intensity_blocks=False, vad_padding_in_seconds=0):
         self.dataset = dataset
         self.output_path = cache_dir / f"{self.dataset.name}"
         self.pose_fps = pose_fps
@@ -30,7 +31,11 @@ class SeamlessSegmenter:
         self.clean_first = clean_first_seconds
         self.clean_final = clean_final_seconds
         self.segment_mode = segment_mode # Can be, one of the following [both, listening, speaking] (segments the frames to only get that data)
-
+        self.filter_out_of_screen_hands = filter_out_of_screen_hands # used to filter out any frames where the hand is out of the screen (noise)
+        self.keep_only_high_intensity_blocks = keep_only_high_intensity_blocks # This is only relevant for 'listener' segment mode, it will keep only high intensity VAD frames (VAD with movement)
+        self.vad_padding_in_seconds = vad_padding_in_seconds # this is to not only grab the VAD section for the speaker mode but also pad it with the build up to the VAD
+        self.vad_padding_in_frames = self.vad_padding_in_seconds * self.pose_fps
+        
         np.random.seed(seed)
         torch.manual_seed(seed)
 
@@ -66,7 +71,7 @@ class SeamlessSegmenter:
             semantic_values_list = self._get_frame_semantics(loader)
             
             # align the audio and pose
-            aligned_pose, aligned_audio, aligned_words, aligned_emotion_list, aligned_semantic_values= self._align_data(full_pose, audio_data, word_list, emotion_category_frames, semantic_values_list)
+            aligned_pose, aligned_audio, aligned_words, aligned_emotion_list, aligned_semantic_values, aligned_off_screen_hand_values = self._align_data(full_pose, audio_data, word_list, emotion_category_frames, semantic_values_list)
 
             # see how many 64-frame chunks fit
             num_subdivisions = math.floor((len(aligned_pose) - self.pose_length) / self.stride) + 1
@@ -79,15 +84,22 @@ class SeamlessSegmenter:
                     pose_start = i * self.stride
                     pose_end = pose_start + self.pose_length
 
+                    # Perhaps skip this fragment if it has any offscreen hand values and we set to filter those out
+                    if self.filter_out_of_screen_hands:
+                        sample_offscreen_hand_values = aligned_off_screen_hand_values[pose_start:pose_end]
+                        if np.any(sample_offscreen_hand_values > 0):
+                            continue
+
                     # semantic values segment
                     sample_semantic_values = aligned_semantic_values[pose_start:pose_end]
                     
                     # Filter (if needed) to only listener or speaker frames. This works using the semantic values where 0.0 means there is no VAD
                     if self.segment_mode != 'both':
-                        is_speaking = np.any(sample_semantic_values > 0.0)
-                        if self.segment_mode == 'speaking' and not is_speaking:
+                        has_speech_core = np.any(sample_semantic_values >= 0.1) 
+                        has_padding = np.any(sample_semantic_values == 0.05)
+                        if self.segment_mode == 'speaking' and not (has_speech_core or has_padding): # All 0s, so skip
                             continue
-                        elif self.segment_mode == 'listening' and is_speaking:
+                        elif self.segment_mode == 'listening' and has_speech_core: # no 0s or 0.05 so speaking actively
                             continue
 
                     sample_pose = aligned_pose[pose_start:pose_end]
@@ -128,7 +140,7 @@ class SeamlessSegmenter:
         env.close()
         logger.info(f"Finished. Total segments cached: {sample_idx}")
 
-    def _align_data(self, full_pose, audio_data, word_list, emotion_list, semantic_values_list):
+    def _align_data(self, full_pose, audio_data, word_list, emotion_list, semantic_values_list, off_screen_hand_values):
         """
         Aligns the motion .npz and audio .wav by finding the shortest common duration 
         """
@@ -155,8 +167,9 @@ class SeamlessSegmenter:
         aligned_emotion_list = emotion_list[pose_start:pose_end]
         aligned_audio = audio_data[audio_start:audio_end]
         aligned_semantic_values = semantic_values_list[pose_start:pose_end]
+        aligned_off_screen_hand_values = off_screen_hand_values[pose_start:pose_end]
         
-        return aligned_pose, aligned_audio, aligned_word_list, aligned_emotion_list, aligned_semantic_values
+        return aligned_pose, aligned_audio, aligned_word_list, aligned_emotion_list, aligned_semantic_values, aligned_off_screen_hand_values
     
     def _get_word_list(self, loader : SeamlessSMPLHLoader, bert_lookup_table : dict):
         """
@@ -244,9 +257,11 @@ class SeamlessSegmenter:
     def _get_frame_semantics(self, loader : SeamlessSMPLHLoader):
         """
         returns semantic values for each frame
-        values cane be 
+        values can be:
         0.0 for no speaking frames
+        0.05 padded listening frames, about to turn into speaking frames
         0.1 for speaking frames
+        0.2: high-intensity speaking frames (top 25% movement of this person during the interaction)
         1.0 for any motion of interest frames
         """
         vad_info = loader.meta_data.transcript.get('metadata:vad', None)
@@ -256,8 +271,21 @@ class SeamlessSegmenter:
             for vad_segment in vad_info:
                 start_frame = int(vad_segment['start'] * self.pose_fps)
                 end_frame = int(vad_segment['end'] * self.pose_fps)
-                # mark it as speech (0.1)
+
+                # Mark the entire padded vad sequence as 0.05 (padded)
+                if self.vad_padding_in_frames > 0.0:
+                    padded_start = max(0, start_frame - self.vad_padding_in_frames)
+                    padded_end = min(loader.num_frames, end_frame + self.vad_padding_in_frames)
+                    sem_scores[padded_start:padded_end] = 0.05
+                # mark the vad sequence as speech (0.1) (overwrites any that were 0.05)
                 sem_scores[max(0, start_frame):min(loader.num_frames, end_frame)] = 0.1
+        
+        # improve 0.1 to 0.2 if movement is in the top 25% (more movement during speech)
+        if loader.meta_data.movement_intensity is not None:
+            threshold = loader.meta_data.movement_intensity_peak_threshold
+            # We only upgrade frames that are already part of a VAD segment
+            peak_mask = (loader.meta_data.movement_intensity > threshold) & (sem_scores == 0.1)
+            sem_scores[peak_mask] = 0.2
 
         # Check for any annotations (moments of interest (MOI))
         annotation_keys = [key for key in loader.meta_data.transcript.keys() if "annotations:" in key]

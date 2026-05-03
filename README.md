@@ -27,10 +27,10 @@ The project utilizes two primary JSON configuration files to manage the data pip
 
 ### Config for the segmenter
 
-* **pose_fps (30)**: How many frames per second the pose should be sampled in
-* **audio_sr (16000)**: The target sample rate for audio
-* **pose_length (64)**: The number of frames per training sample
-* **stride (64)**: The step size between segments. Setting this to equal to pose_length ensures no overlap between clips
+* **pose_fps**: How many frames per second the pose should be sampled in
+* **audio_sr**: The target sample rate for audio
+* **pose_length**: The number of frames per training sample
+* **stride**: The step size between segments. Setting this to equal to pose_length ensures no overlap between clips
 * **max_gb**: the maximum storage limit for the LMDB environment
 * **clean_first_seconds**: Can be used to trim off the first seconds (to prevent t-pose data)
 * **clean_final_seconds**: Can be used to trim off the final seconds (to prevent t-pose data)
