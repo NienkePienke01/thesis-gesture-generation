@@ -19,26 +19,24 @@ import socket
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 checkpoint_dir = PROJECT_ROOT / "checkpoints"
-SHARED_PORT = None
 
 def find_free_port():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(('', 0))
         return s.getsockname()[1]
 
-def ddp_setup(rank, gpu_amount_size):
-    global SHARED_PORT
+def ddp_setup(rank, gpu_amount_size, shared_port):
     print(f"Setting up worker for rank: {rank}")
     os.environ["MASTER_ADDR"] = "localhost"
-    os.environ["MASTER_PORT"] = str(SHARED_PORT)
+    os.environ["MASTER_PORT"] = str(shared_port)
     init_process_group(backend="nccl", rank=rank, world_size=gpu_amount_size)
     print(f"Setup of rank: {rank} done")
 
-def train_model(rank, gpu_amount_size, args):
+def train_model(rank, gpu_amount_size, shared_port, args):
     """
     train_dataset_path and validation_dataset_path should be paths to a lmdb file
     """
-    ddp_setup(rank, gpu_amount_size)
+    ddp_setup(rank, gpu_amount_size, shared_port)
     if rank == 0:
         wandb.init(project=args.project, name=f"{args.project}_{args.mode}_ddp_run", config=vars(args))
     
@@ -106,8 +104,7 @@ def train_model(rank, gpu_amount_size, args):
     print("Finished training...")
 
 def main():
-    global SHARED_PORT
-    SHARED_PORT = find_free_port()
+    shared_port = find_free_port()
     if not checkpoint_dir.exists():
         checkpoint_dir.mkdir(parents=True)
 
@@ -128,7 +125,7 @@ def main():
     gpu_amount_size = len(args.gpus)
     if gpu_amount_size > 1:
         print(f"Running with {gpu_amount_size} gpus")
-        mp.spawn(train_model, args=(gpu_amount_size, args), nprocs=gpu_amount_size)
+        mp.spawn(train_model, args=(gpu_amount_size, shared_port, args), nprocs=gpu_amount_size)
     else:
         print("Running with 1 gpu")
         train_model(0, 1, args)
