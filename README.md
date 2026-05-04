@@ -95,6 +95,7 @@ Just make sure you are the owner of the file by checking with `ls -l uv_sync_clu
 ### Follow these commands in to prepare data and begin training:
 * **Download specific subsets of the dataset using filters.** `uv run python -m seamless_downloading.seamless_downloader --download_name validation_testing --filter_dict '{"label": "naturalistic", "split": "dev"}' --no_preferred_vendors --no_force_pairs --num_samples 2 --no_random_draw --seed 42`
 * **Convert raw files into LMDB format for training access** `uv run -m data_processing.seamless_segmenter --dataset_path data/seamless/downloads/validation_testing --config configs/seamless_segmenter.json`
+* **You can combine multiple LMDB or get portions of a create LMDB for specific training using** `uv run -m training.create_training_dataset --sources experimenting:0.2:0.1 validation_testing:0.2:0.1 --output_name training_data_stage_1 --max_gb 2 --seed 42`
 * **Launch the Stage 1 training process.** `uv run -m training.train_ae_trainer_seamless --config configs/seamless_stage_1_upper_training.json`
 * **Run the Gradio interface to inspect/compare motions and videos** `uv run python -m visualisation.gradio_visualisation`
 
