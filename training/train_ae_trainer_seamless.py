@@ -27,6 +27,7 @@ def find_free_port():
         return s.getsockname()[1]
 
 def ddp_setup(rank, gpu_amount_size):
+    global SHARED_PORT
     print(f"Setting up worker for rank: {rank}")
     os.environ["MASTER_ADDR"] = "localhost"
     os.environ["MASTER_PORT"] = str(SHARED_PORT)
@@ -105,6 +106,7 @@ def train_model(rank, gpu_amount_size, args):
     print("Finished training...")
 
 def main():
+    global SHARED_PORT
     SHARED_PORT = find_free_port()
     if not checkpoint_dir.exists():
         checkpoint_dir.mkdir(parents=True)
