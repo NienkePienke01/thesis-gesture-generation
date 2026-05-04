@@ -26,9 +26,11 @@ def find_free_port():
         return s.getsockname()[1]
 
 def ddp_setup(rank, gpu_amount_size):
+    print(f"Setting up worker for rank: {rank}")
     os.environ["MASTER_ADDR"] = "localhost"
     os.environ["MASTER_PORT"] = str(find_free_port())
     init_process_group(backend="nccl", rank=rank, world_size=gpu_amount_size)
+    print(f"Setup of rank: {rank} done")
 
 def train_model(rank, gpu_amount_size, args):
     """
@@ -37,7 +39,7 @@ def train_model(rank, gpu_amount_size, args):
     ddp_setup(rank, gpu_amount_size)
     if rank == 0:
         wandb.init(project=args.project, name=f"{args.project}_{args.mode}_ddp_run", config=vars(args))
-
+    
     actual_gpu_id = args.gpus[rank]
     trainer = SeamlessStage1Trainer(args, actual_gpu_id)
     
@@ -121,8 +123,10 @@ def main():
 
     gpu_amount_size = len(args.gpus)
     if gpu_amount_size > 1:
+        print(f"Running with {gpu_amount_size} gpus")
         mp.spawn(train_model, args=(gpu_amount_size, args), nprocs=gpu_amount_size)
     else:
+        print("Running with 1 gpu")
         train_model(0, 1, args)
 
 if __name__ == "__main__":
