@@ -19,6 +19,7 @@ import socket
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 checkpoint_dir = PROJECT_ROOT / "checkpoints"
+SHARED_PORT = None
 
 def find_free_port():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -28,7 +29,7 @@ def find_free_port():
 def ddp_setup(rank, gpu_amount_size):
     print(f"Setting up worker for rank: {rank}")
     os.environ["MASTER_ADDR"] = "localhost"
-    os.environ["MASTER_PORT"] = str(find_free_port())
+    os.environ["MASTER_PORT"] = str(SHARED_PORT)
     init_process_group(backend="nccl", rank=rank, world_size=gpu_amount_size)
     print(f"Setup of rank: {rank} done")
 
@@ -104,6 +105,7 @@ def train_model(rank, gpu_amount_size, args):
     print("Finished training...")
 
 def main():
+    SHARED_PORT = find_free_port()
     if not checkpoint_dir.exists():
         checkpoint_dir.mkdir(parents=True)
 
