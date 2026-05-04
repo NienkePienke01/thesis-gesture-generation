@@ -8,8 +8,8 @@
     "log_period": 10,
 
     "data": {
-        "train_lmdb": "cache/segmenter/experimenting",
-        "val_lmdb": "cache/segmenter/validation_testing"
+        "train_lmdb": "cache/segmenter/training_data_stage_1/training_data_stage_1_train",
+        "val_lmdb": "cache/segmenter/training_data_stage_1/training_data_stage_1_val"
     },
 
     "model_params": {
