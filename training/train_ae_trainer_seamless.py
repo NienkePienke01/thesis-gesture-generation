@@ -40,6 +40,9 @@ def train_model(rank, gpu_amount_size, shared_port, args):
     ddp_setup(rank, gpu_amount_size, shared_port)
     start_time = datetime.now().strftime("%Y%m%d_%H%M")
     local_checkpoint_dir = checkpoint_dir / args.project / start_time
+    if not local_checkpoint_dir.exists():
+        local_checkpoint_dir.mkdir(parents=True)
+
     if rank == 0:
         wandb.init(project=args.project, name=f"{args.project}_{args.mode}_ddp_run", config=vars(args))
     
