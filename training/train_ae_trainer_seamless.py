@@ -1,4 +1,12 @@
+import os
 import torch
+import torch.multiprocessing as mp
+from torch.utils.data.distributed import DistributedSampler
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.distributed import init_process_group, destroy_process_group
+import wandb
+import heapq
+from .ae_trainer_seamless import SeamlessStage1Trainer
 from torch.utils.data import DataLoader
 from .ae_trainer_seamless import SeamlessStage1Trainer
 from pathlib import Path
@@ -11,47 +19,79 @@ from tqdm import tqdm
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 checkpoint_dir = PROJECT_ROOT / "checkpoints"
 
-def train_model(args):
+def ddp_setup(rank, gpu_amount_size):
+    os.environ["MASTER_ADDR"] = "localhost"
+    os.environ["MASTER_PORT"] = "12312"
+    init_process_group(backend="nccl", rank=rank, world_size=gpu_amount_size)
+
+def train_model(rank, gpu_amount_size, args):
     """
     train_dataset_path and validation_dataset_path should be paths to a lmdb file
     """
-    trainer = SeamlessStage1Trainer(args)
+    ddp_setup(rank, gpu_amount_size)
+    if rank == 0:
+        wandb.init(project=args.project, name=f"{args.project}_{args.mode}_ddp_run", config=vars(args))
+
+    actual_gpu_id = args.gpus[rank]
+    trainer = SeamlessStage1Trainer(args, actual_gpu_id)
     
     print("Setting up data loaders...")
     train_dataset = SeamlessDataLoader(args.data.train_lmdb, stage=1)
-    train_loader = DataLoader(train_dataset, batch_size=args.training_params.batch_size, shuffle=True)
-    validation_dataset = SeamlessDataLoader(args.data.val_lmdb, stage=1)
-    validation_loader = DataLoader(validation_dataset, batch_size=args.training_params.batch_size, shuffle=False)
+    train_sampler = DistributedSampler(train_dataset, num_replicas=gpu_amount_size, rank=rank)
+    train_loader = DataLoader(train_dataset, batch_size=args.training_params.batch_size, sampler=train_sampler, pin_memory=True)
+    
+    val_dataset = SeamlessDataLoader(args.data.val_lmdb, stage=1)
+    validation_loader = DataLoader(val_dataset, batch_size=args.training_params.batch_size, pin_memory=True)
     
     best_validation_loss = float('inf')
     # training loop
+    top_k_checkpoints = []
     print("Starting training loop...")
     for epoch in range(args.training_params.epochs):
-        train_log_loss = 0
-        progress_bar = tqdm(train_loader, desc=f"Epoch {epoch}", unit="batch")
-        for _, batch_data in enumerate(progress_bar):
-            loss = trainer.train_step(batch_data)
-            train_log_loss += loss
-            progress_bar.set_postfix({"loss": f"{loss:.4f}"})
+        train_sampler.set_epoch(epoch)
+        epoch_losses = {"total": 0, "rec": 0, "vel": 0, "ver": 0}
+
+
+        progress_bar = tqdm(train_loader, disable=(rank != 0))
+        # Training loss
+        for batch_data in progress_bar:
+            losses = trainer.train_step(batch_data)
+            for k in epoch_losses.keys(): epoch_losses[k] += losses.get(k, 0)
         
-        # validation
-        validation_log_loss = 0
-        for batch_data in validation_loader:
-            validation_log_loss += trainer.val_step(batch_data)
+        # Validation loss
+        if rank == 0 and (epoch % args.log_period == 0 or epoch == args.training_params.epochs - 1):
+            avg_validation_loss = trainer.val_step(next(iter(validation_loader)))["total"]
+            avg_train_loss = epoch_losses["total"] / len(train_loader)
+
+            wandb.log({
+                "epoch": epoch,
+                "train/total_loss": avg_train_loss,
+                "val/total_loss": avg_validation_loss,
+                "lr": trainer.opt.param_groups[0]['lr'],
+                **{f"train/{k}": v / len(train_loader) for k, v in epoch_losses.items() if k != "total"}
+            })
             
-        avg_train_loss = train_log_loss / len(train_loader)
-        avg_validation_loss = validation_log_loss / len(validation_loader)
-        
-        print(f"Epoch {epoch+1} out of {args.training_params.epochs} Complete | Avg Train: {avg_train_loss:.4f} | Avg Val: {avg_validation_loss:.4f}")
-        
-        # save the best checkpoint
-        if avg_validation_loss < best_validation_loss:
-            best_validation_loss = avg_validation_loss
-            save_path = str(checkpoint_dir / f"{args.project}_{args.mode}_best.bin")
-            torch.save(trainer.model.state_dict(), save_path)
-            print(f"Saved new best model to {save_path}")
+            # save the best top-k checkpoints
+            save_path = checkpoint_dir / f"model_epoch{epoch}_loss{avg_validation_loss:.4f}.bin"
+            if len(top_k_checkpoints) < 3:
+                torch.save(trainer.model.module.state_dict(), save_path)
+                heapq.heappush(top_k_checkpoints, (-avg_validation_loss, save_path))
+            elif avg_validation_loss < -top_k_checkpoints[0][0]:
+                _, old_path = heapq.heappop(top_k_checkpoints)
+                if os.path.exists(old_path): os.remove(old_path)
+                torch.save(trainer.model.module.state_dict(), save_path)
+                heapq.heappush(top_k_checkpoints, (-avg_validation_loss, save_path))
+            
+            # Periodic Backup
+            if epoch % args.periodic_backup_after_x_epochs == 0:
+                backup_path = checkpoint_dir / f"periodic_backup_epoch{epoch}.bin"
+                torch.save(trainer.model.module.state_dict(), backup_path)
 
         trainer.scheduler.step()
+    
+    if rank == 0: 
+        wandb.finish()
+    destroy_process_group()
     
     print("Finished training...")
 
@@ -72,7 +112,12 @@ def main():
     args.training_params = SimpleNamespace(**config_dict["training_params"])
     args.loss_weights = SimpleNamespace(**config_dict["loss_weights"])
     args.model_params = config_dict["model_params"]
-    train_model(args)
+
+    gpu_amount_size = len(args.gpus)
+    if gpu_amount_size > 1:
+        mp.spawn(train_model, args=(gpu_amount_size, args), nprocs=gpu_amount_size)
+    else:
+        train_model(0, 1, args)
 
 if __name__ == "__main__":
     main()

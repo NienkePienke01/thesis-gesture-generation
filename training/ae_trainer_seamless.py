@@ -5,15 +5,15 @@ from models.rvq import RVQVAE
 from optimizers.loss_factory import GeodesicLoss, get_loss_func
 from data_processing.utils import get_smplh_model
 from utils import rotation_conversions as rc
+from torch.nn.parallel import DistributedDataParallel as DDP
 
 class SeamlessStage1Trainer:
-    def __init__(self, args):
+    def __init__(self, args, gpu_id):
         self.args = args
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device(f"cuda:{gpu_id}")
 
         self.model = RVQVAE(args, **args.model_params).to(self.device)
-        if len(args.gpus) > 1:
-            self.model = torch.nn.DataParallel(self.model, device_ids=args.gpus)
+        self.model = DDP(self.model, device_ids=[gpu_id])
 
         self.opt = torch.optim.Adam(self.model.parameters(), lr=args.training_params.lr_base)
         self.scheduler = torch.optim.lr_scheduler.StepLR(self.opt, step_size=args.training_params.decay_epochs, gamma=0.1)
@@ -41,7 +41,7 @@ class SeamlessStage1Trainer:
         self.model.train()
         self.opt.zero_grad()
         
-        target_pose = dict_data["pose"].to(self.device) # (batch_size, 64, 129)
+        target_pose = dict_data["pose"].to(self.device, non_blocking=True) # (batch_size, 64, 129)
         if self.args.mode == "upper_body":
             target_pose = target_pose[:, :, :39]
             joint_count = 13
@@ -100,7 +100,14 @@ class SeamlessStage1Trainer:
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.training_params.grad_norm)
         self.opt.step()
 
-        return total_loss.item()
+        return {
+            "total": total_loss.item(),
+            "rec": loss_rec.item(),
+            "vel": loss_vel.item(),
+            "acc": loss_acc.item(),
+            "ver": loss_ver.item() if torch.is_tensor(loss_ver) else loss_ver,
+            "commit": loss_commit.item()
+        }
 
     def val_step(self, dict_data):
         """
@@ -108,7 +115,7 @@ class SeamlessStage1Trainer:
         """
         self.model.eval()
         with torch.no_grad():
-            raw_pose = dict_data["pose"].to(self.device)
+            raw_pose = dict_data["pose"].to(self.device, non_blocking=True)
             if self.args.mode == "upper_body":
                 target_pose = raw_pose[:, :, :39]
                 joint_count = 13
@@ -153,7 +160,11 @@ class SeamlessStage1Trainer:
             loss_commit = model_output["embedding_loss"]
             total_loss = loss_rec + loss_commit + loss_ver
             
-        return total_loss.item()
+        return {
+            "total": total_loss.item(), 
+            "rec": loss_rec.item(), 
+            "ver": loss_ver.item()
+        }
     
     def prepare_smpl_input(self, model_output, mode="full"):
         """

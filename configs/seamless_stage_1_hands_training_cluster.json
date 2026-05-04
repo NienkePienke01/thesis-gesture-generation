@@ -1,0 +1,40 @@
+{
+    "project": "seamless_stage1_training_hands",
+    "mode": "hands",
+    "device": "cuda",
+    "gpus": [2, 3],
+    "vae_test_dim": 78,
+    "periodic_backup_after_x_epochs": 50,
+    "log_period": 10,
+
+    "data": {
+        "train_lmdb": "cache/segmenter/experimenting",
+        "val_lmdb": "cache/segmenter/validation_testing"
+    },
+
+    "model_params": {
+        "nb_code": 256,
+        "code_dim": 256,
+        "output_emb_width": 256,
+        "down_t": 2,
+        "stride_t": 2,
+        "width": 256,
+        "depth": 3,
+        "dilation_growth_rate": 3,
+        "activation": "relu"
+    },
+
+    "training_params": {
+        "batch_size": 64,
+        "epochs": 300,
+        "lr_base": 0.0003,
+        "decay_epochs": 250,
+        "grad_norm": 1.0
+    },
+
+    "loss_weights": {
+        "rec_weight": 1,
+        "rec_pos_weight": 1,
+        "rec_ver_weight": 1
+    }
+}

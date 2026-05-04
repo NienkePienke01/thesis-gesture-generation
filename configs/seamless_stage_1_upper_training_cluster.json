@@ -1,9 +1,11 @@
 {
-    "project": "seamless_stage1_training",
+    "project": "seamless_stage1_training_upper_body",
     "mode": "upper_body",
     "device": "cuda",
-    "gpus": [0],
+    "gpus": [0, 1],
     "vae_test_dim": 78,
+    "periodic_backup_after_x_epochs": 50,
+    "log_period": 10,
 
     "data": {
         "train_lmdb": "cache/segmenter/experimenting",
@@ -24,9 +26,9 @@
 
     "training_params": {
         "batch_size": 64,
-        "epochs": 2,
+        "epochs": 300,
         "lr_base": 0.0003,
-        "decay_epochs": 9999,
+        "decay_epochs": 250,
         "grad_norm": 1.0
     },
 

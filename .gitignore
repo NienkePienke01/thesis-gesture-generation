@@ -24,6 +24,7 @@ cache/csv_filtering_cache/
 
 # Ignore cached videoos
 cache/video_cache/
+wandb/
 
 # Ignore checkpoints
 checkpoints/*.bin
