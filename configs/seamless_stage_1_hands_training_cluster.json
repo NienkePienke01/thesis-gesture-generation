@@ -3,7 +3,7 @@
     "mode": "hands",
     "device": "cuda",
     "gpus": [2, 3],
-    "vae_test_dim": 78,
+    "vae_test_dim": 180,
     "periodic_backup_after_x_epochs": 50,
     "log_period": 10,
 
