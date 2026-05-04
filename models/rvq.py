@@ -738,6 +738,7 @@ class RVQVAE(nn.Module):
         output = {
             'rec_pose': x_out,
             'embedding_loss': commit_loss,
+            'perplexity': perplexity
         }
         # code_idx, all_codes = self.encode(x)
         # x_out_index = self.forward_decoder(code_idx)

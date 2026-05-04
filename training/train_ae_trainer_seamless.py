@@ -16,6 +16,7 @@ from types import SimpleNamespace
 import argparse
 from tqdm import tqdm
 import socket
+from datetime import datetime
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 checkpoint_dir = PROJECT_ROOT / "checkpoints"
@@ -37,6 +38,8 @@ def train_model(rank, gpu_amount_size, shared_port, args):
     train_dataset_path and validation_dataset_path should be paths to a lmdb file
     """
     ddp_setup(rank, gpu_amount_size, shared_port)
+    start_time = datetime.now().strftime("%Y%m%d_%H%M")
+    local_checkpoint_dir = checkpoint_dir / args.project / start_time
     if rank == 0:
         wandb.init(project=args.project, name=f"{args.project}_{args.mode}_ddp_run", config=vars(args))
     
@@ -68,19 +71,22 @@ def train_model(rank, gpu_amount_size, shared_port, args):
         
         # Validation loss
         if rank == 0 and (epoch % args.log_period == 0 or epoch == args.training_params.epochs - 1):
-            avg_validation_loss = trainer.val_step(next(iter(validation_loader)))["total"]
+            val_losses = trainer.val_step(next(iter(validation_loader)))
+            avg_validation_loss = val_losses["total"]
             avg_train_loss = epoch_losses["total"] / len(train_loader)
 
             wandb.log({
                 "epoch": epoch,
                 "train/total_loss": avg_train_loss,
                 "val/total_loss": avg_validation_loss,
+                "val/rec": val_losses.get("rec", 0),
+                "val/ver": val_losses.get("ver", 0)
                 "lr": trainer.opt.param_groups[0]['lr'],
                 **{f"train/{k}": v / len(train_loader) for k, v in epoch_losses.items() if k != "total"}
             })
             
             # save the best top-k checkpoints
-            save_path = checkpoint_dir / f"model_epoch{epoch}_loss{avg_validation_loss:.4f}.bin"
+            save_path = local_checkpoint_dir / f"model_epoch{epoch}_loss{avg_validation_loss:.4f}.bin"
             if len(top_k_checkpoints) < 3:
                 torch.save(trainer.model.module.state_dict(), save_path)
                 heapq.heappush(top_k_checkpoints, (-avg_validation_loss, save_path))
@@ -92,7 +98,7 @@ def train_model(rank, gpu_amount_size, shared_port, args):
             
             # Periodic Backup
             if epoch % args.periodic_backup_after_x_epochs == 0:
-                backup_path = checkpoint_dir / f"periodic_backup_epoch{epoch}.bin"
+                backup_path = local_checkpoint_dir / f"periodic_backup_epoch_{epoch}.bin"
                 torch.save(trainer.model.module.state_dict(), backup_path)
 
         trainer.scheduler.step()

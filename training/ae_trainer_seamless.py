@@ -102,6 +102,7 @@ class SeamlessStage1Trainer:
 
         return {
             "total": total_loss.item(),
+            "perplexity": model_output["perplexity"].item(),
             "rec": loss_rec.item(),
             "vel": loss_vel.item(),
             "acc": loss_acc.item(),
