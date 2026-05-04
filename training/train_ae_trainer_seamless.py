@@ -63,14 +63,15 @@ def train_model(rank, gpu_amount_size, shared_port, args):
     print("Starting training loop...")
     for epoch in range(args.training_params.epochs):
         train_sampler.set_epoch(epoch)
-        epoch_losses = {"total": 0, "rec": 0, "vel": 0, "ver": 0}
-
-
+        
+        
+        epoch_losses = {}
         progress_bar = tqdm(train_loader, disable=(rank != 0))
         # Training loss
         for batch_data in progress_bar:
             losses = trainer.train_step(batch_data)
-            for k in epoch_losses.keys(): epoch_losses[k] += losses.get(k, 0)
+            for k, v in losses.items():
+                epoch_losses[k] = epoch_losses.get(k, 0) + v
         
         # Validation loss
         if rank == 0 and (epoch % args.log_period == 0 or epoch == args.training_params.epochs - 1):
