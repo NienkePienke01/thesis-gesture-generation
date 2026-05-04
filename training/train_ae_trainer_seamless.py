@@ -15,13 +15,19 @@ import json
 from types import SimpleNamespace
 import argparse
 from tqdm import tqdm
+import socket
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 checkpoint_dir = PROJECT_ROOT / "checkpoints"
 
+def find_free_port():
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(('', 0))
+        return s.getsockname()[1]
+
 def ddp_setup(rank, gpu_amount_size):
     os.environ["MASTER_ADDR"] = "localhost"
-    os.environ["MASTER_PORT"] = "12312"
+    os.environ["MASTER_PORT"] = str(find_free_port())
     init_process_group(backend="nccl", rank=rank, world_size=gpu_amount_size)
 
 def train_model(rank, gpu_amount_size, args):
