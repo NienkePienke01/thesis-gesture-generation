@@ -62,7 +62,10 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
     upper_body_joint_count = 13
     hands_joint_count = 30
     batch_size = 1 # We do not batch here, so its just hard set to 1
-
+    
+    # For debugging
+    num_chunks = min([num_chunks, 5])
+    #
     with torch.no_grad():
         for i in range(num_chunks):
             start_frame = i * chunk_frames
@@ -73,7 +76,12 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
             upper_body_target_pose = chunk_tensor[:, :, :39]
             upper_body_target_pose_matrix = rc.axis_angle_to_matrix(upper_body_target_pose.reshape(batch_size, chunk_frames, upper_body_joint_count, 3))
             upper_body_target_pose_6d = rc.matrix_to_rotation_6d(upper_body_target_pose_matrix).reshape(batch_size, chunk_frames, upper_body_joint_count * 6)
-            reconstructed_upper_body_pose_6d = _stage1_model_cache["upper_body_model"](upper_body_target_pose_6d)["rec_pose"].reshape(batch_size, chunk_frames, upper_body_joint_count, 6)
+            #Debug
+            raw_output = _stage1_model_cache["upper_body_model"](upper_body_target_pose_6d)["rec_pose"]
+            movement_variance = torch.var(raw_output, dim=1).mean().item()
+            reconstructed_upper_body_pose_6d = raw_output.reshape(batch_size, chunk_frames, upper_body_joint_count, 6)
+            #
+            # reconstructed_upper_body_pose_6d = _stage1_model_cache["upper_body_model"](upper_body_target_pose_6d)["rec_pose"].reshape(batch_size, chunk_frames, upper_body_joint_count, 6)
             reconstructed_upper_body_pose_matrix = rc.rotation_6d_to_matrix(reconstructed_upper_body_pose_6d)
             reconstructed_upper_body_pose_axis_angles = rc.matrix_to_axis_angle(reconstructed_upper_body_pose_matrix).reshape(batch_size * chunk_frames, -1)
 
@@ -87,6 +95,14 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
 
             combined_reconstruction = torch.cat([reconstructed_upper_body_pose_axis_angles, reconstructed_hands_pose_axis_angles], dim=-1)
             reconstructed_pose_list.append(combined_reconstruction.squeeze(0))
+
+            # Debug
+            if i == 1:
+                print("---------DEBUG---------")
+                print(f"Movement Variance: {movement_variance:.8f}")
+                print(f"Upper Body 6D Input Shape: {upper_body_target_pose_6d.shape}")
+                print(f"Reshaped 6D Pose Shape: {reconstructed_upper_body_pose_6d.shape}")
+                print(f"Max Axis Angle value: {reconstructed_upper_body_pose_axis_angles.abs().max().item():.2f}")
     
     if not reconstructed_pose_list:
         return None, "Status: Input sequence too short for chunk_frames chunks based on the given config."
