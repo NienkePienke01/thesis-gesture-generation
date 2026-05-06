@@ -3,9 +3,16 @@ import torch
 from visualisation.single_visualizer_tab import render_single_visualizer_tab
 from visualisation.dyadic_interaction_tab import render_dyadic_interaction_tab
 from visualisation.reconstruction_tab import render_reconstruction_tab
+import os
+from pathlib import Path
 
 SKIP_INTERVALS = [-30, -15, -5, 5, 15, 30]
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+custom_temp_dir = PROJECT_ROOT / "cache" / "gradio_tmp"
+os.makedirs(custom_temp_dir, exist_ok=True)
+os.environ['GRADIO_TEMP_DIR'] = custom_temp_dir
 
 def main():
     js_controls = {

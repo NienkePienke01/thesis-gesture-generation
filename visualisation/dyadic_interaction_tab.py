@@ -1,6 +1,8 @@
 import gradio as gr
 import data_processing.utils as utils
 from visualisation.file_browser import create_file_browser
+import os
+os.environ['PYOPENGL_PLATFORM'] = 'egl'
 
 def validate_interaction_files(file_list):
     if file_list and len(file_list) != 2:

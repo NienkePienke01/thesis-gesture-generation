@@ -9,6 +9,7 @@ import trimesh
 from pathlib import Path
 import json
 import pandas as pd
+os.environ['PYOPENGL_PLATFORM'] = 'egl'
 
 _model_cache = {}
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
