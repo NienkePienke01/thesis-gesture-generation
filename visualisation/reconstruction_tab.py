@@ -31,7 +31,7 @@ def load_models_from_files(hand_config, upper_body_config, hand_checkpoint, uppe
         hand_args = SimpleNamespace(**hand_config_dict)
         hand_model = RVQVAE(hand_args, **hand_config_dict["model_params"]).to(device)
         hand_model.load_state_dict(torch.load(hand_checkpoint, map_location=device, weights_only=True))
-        hand_model.eval()
+        hand_model.train()
 
         # Initialize Upper Body Model
         with open(upper_body_config, 'r') as f:
@@ -39,14 +39,10 @@ def load_models_from_files(hand_config, upper_body_config, hand_checkpoint, uppe
         upper_body_args = SimpleNamespace(**upper_body_config_dict)
         upper_body_model = RVQVAE(upper_body_args, **upper_body_config_dict["model_params"]).to(device)
         upper_body_model.load_state_dict(torch.load(upper_body_checkpoint, map_location=device, weights_only=True))
-        upper_body_model.eval()
+        upper_body_model.train()
 
         _stage1_model_cache["hand_model"] = hand_model
         _stage1_model_cache["upper_body_model"] = upper_body_model
-        # DEBUG
-        for name, param in _stage1_model_cache["upper_body_model"].named_parameters():
-            if torch.isnan(param).any() or torch.isinf(param).any():
-                print(f"Parameter {name} is corrupted in the saved checkpoint!")
         
         return "Status: Hand and Upper Body models loaded successfully."
     except Exception as e:
