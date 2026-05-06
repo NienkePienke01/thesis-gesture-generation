@@ -1,12 +1,13 @@
 import gradio as gr
 import data_processing.utils as utils
+from visualisation.file_browser import create_file_browser
 
 MAX_GRID_SLOTS = 6
 
 def render_single_visualizer_tab(device):
     with gr.Row(variant="panel"):
         with gr.Column(scale=2):
-            file_input = gr.File(label="Upload Single NPZ or MP4", file_count="single")
+            file_input = create_file_browser("Hand Config (.json)", extensions=[".mp4", ".npz"], file_count="single")
             with gr.Row():
                 use_cache = gr.Checkbox(label="Use Cache", value=True)
                 custom_name = gr.Textbox(label="Custom Label", placeholder="Experiment Note")
@@ -37,10 +38,10 @@ def render_single_visualizer_tab(device):
         slot_updates = [gr.update() for _ in range(MAX_GRID_SLOTS * 4)]
         method_label = f"### {source} (Single)\n{label_text}"
         
-        if file_obj.name.lower().endswith('.mp4'):
-            result_path = file_obj.name
+        if file_obj.lower().endswith('.mp4'):
+            result_path = file_obj
         else:
-            loader = utils.SeamlessSMPLHLoader(file_obj.name, device=device) if source == 'Seamless' else utils.BeatLoader(file_obj.name, device=device)
+            loader = utils.SeamlessSMPLHLoader(file_obj, device=device) if source == 'Seamless' else utils.BeatLoader(file_obj, device=device)
             result_path = loader.generate_video(progress=progress, use_cache=cache_flag)
 
         slot_pos = current_idx * 4

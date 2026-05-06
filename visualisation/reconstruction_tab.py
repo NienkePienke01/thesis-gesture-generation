@@ -9,6 +9,7 @@ import cv2
 import pyrender
 import trimesh
 import copy
+from visualisation.file_browser import create_file_browser
 
 from models.rvq import RVQVAE
 import data_processing.utils as utils
@@ -24,19 +25,19 @@ def load_models_from_files(hand_config, upper_body_config, hand_checkpoint, uppe
     """
     try:
         # Initialize Hand Model
-        with open(hand_config.name, 'r') as f:
+        with open(hand_config, 'r') as f:
             hand_config_dict = json.load(f)
         hand_args = SimpleNamespace(**hand_config_dict)
         hand_model = RVQVAE(hand_args, **hand_config_dict["model_params"]).to(device)
-        hand_model.load_state_dict(torch.load(hand_checkpoint.name, map_location=device))
+        hand_model.load_state_dict(torch.load(hand_checkpoint, map_location=device))
         hand_model.eval()
 
         # Initialize Upper Body Model
-        with open(upper_body_config.name, 'r') as f:
+        with open(upper_body_config, 'r') as f:
             upper_body_config_dict = json.load(f)
         upper_body_args = SimpleNamespace(**upper_body_config_dict)
         upper_body_model = RVQVAE(upper_body_args, **upper_body_config_dict["model_params"]).to(device)
-        upper_body_model.load_state_dict(torch.load(upper_body_checkpoint.name, map_location=device))
+        upper_body_model.load_state_dict(torch.load(upper_body_checkpoint, map_location=device))
         upper_body_model.eval()
 
         _stage1_model_cache["hand_model"] = hand_model
@@ -51,7 +52,7 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
         return None, "Status: Please load both models first."
 
     # SeamlessSMPLHLoader automatically handles the 129-dim extraction
-    original_loader = utils.SeamlessSMPLHLoader(target_npz_file.name, device=device)
+    original_loader = utils.SeamlessSMPLHLoader(target_npz_file, device=device)
     full_pose_sequence = original_loader.get_trainable_pose().to(device) # Shape: [Total_Frames, 129]
     
     # Segment into 64-frame chunks for the RVQVAE
@@ -90,11 +91,11 @@ def render_reconstruction_tab(device):
         gr.Markdown("### 1. Upload Model Files")
         with gr.Row():
             with gr.Column():
-                hand_config = gr.File(label="Hand Config (.json)")
-                hand_checkpoint = gr.File(label="Hand Checkpoint (.bin)")
+                hand_config = create_file_browser("Hand Config (.json)", extensions=[".json"], file_count="single")
+                hand_checkpoint = create_file_browser("Hand Checkpoint (.bin)", extensions=[".bin"], file_count="single")
             with gr.Column():
-                upper_body_config = gr.File(label="Upper Body Config (.json)")
-                upper_body_checkpoint = gr.File(label="Upper Body Checkpoint (.bin)")
+                upper_body_config = create_file_browser("Upper Body Config (.json)", extensions=[".json"], file_count="single")
+                upper_body_checkpoint = create_file_browser("Upper Body Checkpoint (.bin)", extensions=[".bin"], file_count="single")
         
         load_models_button = gr.Button("Initialize Stage 1 Models")
         status_markdown = gr.Markdown("Status: Waiting for models...")
@@ -102,7 +103,7 @@ def render_reconstruction_tab(device):
         gr.Markdown("---")
         gr.Markdown("### 2. Compare Original vs Reconstruction")
         with gr.Row():
-            target_npz_file = gr.File(label="Target NPZ File")
+            target_npz_file = create_file_browser("Target .NPZ file", extensions=[".npz"], file_count="single")
             generate_video_button = gr.Button("Generate Side-by-Side Video", variant="primary")
         
         output_video_component = gr.Video(label="Front View: Original (Left) | Reconstructed (Right)")
