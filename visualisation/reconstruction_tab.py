@@ -43,6 +43,10 @@ def load_models_from_files(hand_config, upper_body_config, hand_checkpoint, uppe
 
         _stage1_model_cache["hand_model"] = hand_model
         _stage1_model_cache["upper_body_model"] = upper_body_model
+        # DEBUG
+        for name, param in _stage1_model_cache["upper_body_model"].named_parameters():
+            if torch.isnan(param).any() or torch.isinf(param).any():
+                print(f"Parameter {name} is corrupted in the saved checkpoint!")
         
         return "Status: Hand and Upper Body models loaded successfully."
     except Exception as e:
