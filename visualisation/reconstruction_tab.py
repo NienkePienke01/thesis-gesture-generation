@@ -10,7 +10,7 @@ import pyrender
 import trimesh
 import copy
 from visualisation.file_browser import create_file_browser
-
+from utils import rotation_conversions as rc
 from models.rvq import RVQVAE
 import data_processing.utils as utils
 
@@ -29,7 +29,7 @@ def load_models_from_files(hand_config, upper_body_config, hand_checkpoint, uppe
             hand_config_dict = json.load(f)
         hand_args = SimpleNamespace(**hand_config_dict)
         hand_model = RVQVAE(hand_args, **hand_config_dict["model_params"]).to(device)
-        hand_model.load_state_dict(torch.load(hand_checkpoint, map_location=device))
+        hand_model.load_state_dict(torch.load(hand_checkpoint, map_location=device, weights_only=True))
         hand_model.eval()
 
         # Initialize Upper Body Model
@@ -37,7 +37,7 @@ def load_models_from_files(hand_config, upper_body_config, hand_checkpoint, uppe
             upper_body_config_dict = json.load(f)
         upper_body_args = SimpleNamespace(**upper_body_config_dict)
         upper_body_model = RVQVAE(upper_body_args, **upper_body_config_dict["model_params"]).to(device)
-        upper_body_model.load_state_dict(torch.load(upper_body_checkpoint, map_location=device))
+        upper_body_model.load_state_dict(torch.load(upper_body_checkpoint, map_location=device, weights_only=True))
         upper_body_model.eval()
 
         _stage1_model_cache["hand_model"] = hand_model
@@ -51,11 +51,9 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
     if _stage1_model_cache["hand_model"] is None or _stage1_model_cache["upper_body_model"] is None:
         return None, "Status: Please load both models first."
 
-    # SeamlessSMPLHLoader automatically handles the 129-dim extraction
     original_loader = utils.SeamlessSMPLHLoader(target_npz_file, device=device)
     full_pose_sequence = original_loader.get_trainable_pose().to(device) # Shape: [Total_Frames, 129]
     
-    # Segment into 64-frame chunks for the RVQVAE
     num_frames = full_pose_sequence.shape[0]
     num_chunks = num_frames // 64
     reconstructed_pose_list = []
@@ -67,17 +65,31 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
             chunk_tensor = full_pose_sequence[start_frame:end_frame].unsqueeze(0) # Shape: [1, 64, 129]
             
             # Split: Upper Body (indices 0-39), Hands (indices 39-129)
-            upper_body_input = chunk_tensor[:, :, :39]
-            hand_input = chunk_tensor[:, :, 39:]
+            upper_body_input_axis_angle = chunk_tensor[:, :, :39].reshape(1, 64, 13, 3)
+            hand_input_axis_angle = chunk_tensor[:, :, 39:].reshape(1, 64, 30, 3)
             
-            reconstructed_upper_body = _stage1_model_cache["upper_body_model"](upper_body_input)["rec_pose"]
-            reconstructed_hand = _stage1_model_cache["hand_model"](hand_input)["rec_pose"]
+            # Convert to 6D
+            upper_body_input = rc.matrix_to_rotation_6d(rc.axis_angle_to_matrix(upper_body_input_axis_angle)).reshape(1, 64, 78).transpose(1, 2)
+            hand_input = rc.matrix_to_rotation_6d(rc.axis_angle_to_matrix(hand_input_axis_angle)).reshape(1, 64, 180).transpose(1, 2)
+            
+            # Model inference
+            reconstructed_upper_body_6d = _stage1_model_cache["upper_body_model"](upper_body_input)["rec_pose"]
+            reconstructed_hand_6d = _stage1_model_cache["hand_model"](hand_input)["rec_pose"]
+            
+            # Transpose back and convert to Axis-Angle
+            reconstructed_upper_body_6d = reconstructed_upper_body_6d.transpose(1, 2).reshape(1, 64, 13, 6)
+            reconstructed_hand_6d = reconstructed_hand_6d.transpose(1, 2).reshape(1, 64, 30, 6)
+            
+            reconstructed_upper_body = rc.matrix_to_axis_angle(rc.rotation_6d_to_matrix(reconstructed_upper_body_6d)).reshape(1, 64, 39)
+            reconstructed_hand = rc.matrix_to_axis_angle(rc.rotation_6d_to_matrix(reconstructed_hand_6d)).reshape(1, 64, 90)
             
             # Stitch reconstructed components back together
             combined_reconstruction = torch.cat([reconstructed_upper_body, reconstructed_hand], dim=-1)
             reconstructed_pose_list.append(combined_reconstruction.squeeze(0))
     
-    # Concatenate all chunks back into a continuous sequence
+    if not reconstructed_pose_list:
+        return None, "Status: Input sequence too short for X-frame chunks based on the given config."
+
     final_reconstructed_pose = torch.cat(reconstructed_pose_list, dim=0)
     reconstructed_loader = copy.deepcopy(original_loader)
     reconstructed_loader.overwrite_with_reconstructed_pose(final_reconstructed_pose)
