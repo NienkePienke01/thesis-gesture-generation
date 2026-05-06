@@ -61,7 +61,9 @@ def train_model(rank, gpu_amount_size, shared_port, args):
     # training loop
     top_k_checkpoints = []
     print("Starting training loop...")
+    global_epoch = 0
     for epoch in range(args.training_params.epochs):
+        global_epoch = epoch
         train_sampler.set_epoch(epoch)
         
         
@@ -107,8 +109,12 @@ def train_model(rank, gpu_amount_size, shared_port, args):
 
         trainer.scheduler.step()
     
-    if rank == 0: 
+    if rank == 0:
+        final_save_path = local_checkpoint_dir / f"model_final_epoch_{global_epoch}_val_loss_{avg_validation_loss}.bin"
+        torch.save(trainer.model.module.state_dict(), final_save_path)
+        print(f"Final model saved to {final_save_path}")
         wandb.finish()
+
     destroy_process_group()
     
     print("Finished training...")

@@ -425,6 +425,40 @@ class SeamlessSMPLHLoader(GenericLoader):
         
         return final_vector
 
+    def overwrite_with_reconstructed_pose(self, reconstructed_pose):
+        """
+        reconstructed_pose: Tensor of shape (num_frames, 129)
+        Re-maps the 129-dim vector back to the 21-joint structure.
+        """
+        num_frames = reconstructed_pose.shape[0]
+        device = reconstructed_pose.device
+        
+        # Split the 129-dim vector back into its components
+        # Indices: Body (0:39), Left Hand (39:84), Right Hand (84:129)
+        rec_body_flat = reconstructed_pose[:, :39]
+        rec_left_hand_flat = reconstructed_pose[:, 39:84]
+        rec_right_hand_flat = reconstructed_pose[:, 84:129]
+
+        # Reshape components
+        rec_body = rec_body_flat.reshape(num_frames, 13, 3)
+        rec_left_hand = rec_left_hand_flat.reshape(num_frames, 15, 3)
+        rec_right_hand = rec_right_hand_flat.reshape(num_frames, 15, 3)
+
+        # Create a full 21-joint body pose tensor initialized to zero
+        full_body_pose = torch.zeros((num_frames, 21, 3), device=device)
+        
+        # Map the 13 reconstructed joints back to their original skeletal indices
+        full_body_pose[:, self.keep_indices, :] = rec_body
+
+        # Update SMPLParams
+        self.num_frames = num_frames
+        self.SMPLParams.body = full_body_pose
+        self.SMPLParams.left_hand = rec_left_hand
+        self.SMPLParams.right_hand = rec_right_hand
+        
+        # Reset vertices so they are re-calculated from the new params next time they're needed
+        self.vertices = self.get_smpl_vertices_from_SMPLParams()
+
 
 
 def generate_interaction_video(loader1, loader2, width=1280, height=720, output_directory='cache/video_cache/interactions', progress=None, use_cache=True):
@@ -477,6 +511,61 @@ def generate_interaction_video(loader1, loader2, width=1280, height=720, output_
         
         if progress is not None and i % 50 == 0:
             progress(i/num_frames, desc=f"Rendering Interaction: {i}/{num_frames}")
+
+    renderer.delete()
+    video_writer.release()
+    return video_path
+
+def generate_reconstruction_comparison_video(loader_original, loader_reconstructed, width=1280, height=720, output_directory='cache/video_cache/reconstructions', progress=None, use_cache=True):
+    os.makedirs(output_directory, exist_ok=True)
+    sample_name = f"{loader_original.sample_name}_comparison"
+    video_path = os.path.join(output_directory, f"{sample_name}.mp4")
+    
+    if use_cache and os.path.exists(video_path):
+        if progress is not None: progress(1.0, desc="Loaded from cache!")
+        return video_path
+    
+    video_writer = cv2.VideoWriter(video_path, cv2.VideoWriter_fourcc(*'mp4v'), 30, (width, height))
+    
+    scene = pyrender.Scene(bg_color=[1.0, 1.0, 1.0])
+
+    # Camera centered between the two models
+    camera = pyrender.PerspectiveCamera(yfov=np.pi / 3.0)
+    camera_pose = np.eye(4)
+    camera_pose[:3, 3] = [0, 0.5, 3.0]  # Centered, slightly raised
+    scene.add(camera, pose=camera_pose)
+    
+    light = pyrender.DirectionalLight(color=[1.0, 1.0, 1.0], intensity=3.0)
+    scene.add(light, pose=camera_pose)
+
+    renderer = pyrender.OffscreenRenderer(width, height)
+    faces = loader_original.body_model.faces
+
+    # Shift models left and right without rotating them
+    # Original on the Left
+    p1_pose = trimesh.transformations.translation_matrix([-0.6, 0, 0])
+    # Reconstructed on the Right
+    p2_pose = trimesh.transformations.translation_matrix([0.6, 0, 0])
+
+    node_original, node_reconstructed = None, None
+    num_frames = min(loader_original.num_frames, loader_reconstructed.num_frames)
+
+    for i in range(num_frames):
+        # Create meshes for both
+        mesh_orig = pyrender.Mesh.from_trimesh(trimesh.Trimesh(loader_original.vertices[i], faces, process=False))
+        mesh_rec = pyrender.Mesh.from_trimesh(trimesh.Trimesh(loader_reconstructed.vertices[i], faces, process=False))
+
+        if node_original: scene.remove_node(node_original)
+        if node_reconstructed: scene.remove_node(node_reconstructed)
+            
+        node_original = scene.add(mesh_orig, pose=p1_pose)
+        node_reconstructed = scene.add(mesh_rec, pose=p2_pose)
+
+        color, _ = renderer.render(scene)
+        video_writer.write(cv2.cvtColor(color, cv2.COLOR_RGB2BGR))
+        
+        if progress is not None and i % 50 == 0:
+            progress(i/num_frames, desc=f"Rendering Comparison: {i}/{num_frames}")
 
     renderer.delete()
     video_writer.release()
