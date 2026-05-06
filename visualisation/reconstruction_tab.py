@@ -54,41 +54,41 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
     original_loader = utils.SeamlessSMPLHLoader(target_npz_file, device=device)
     full_pose_sequence = original_loader.get_trainable_pose().to(device) # Shape: [Total_Frames, 129]
     
+    chunk_frames = 64
     num_frames = full_pose_sequence.shape[0]
-    num_chunks = num_frames // 64
+    num_chunks = num_frames // chunk_frames
     reconstructed_pose_list = []
+    upper_body_joint_count = 13
+    hands_joint_count = 30
+    batch_size = 1 # We do not batch here, so its just hard set to 1
 
     with torch.no_grad():
         for i in range(num_chunks):
-            start_frame = i * 64
-            end_frame = (i + 1) * 64
-            chunk_tensor = full_pose_sequence[start_frame:end_frame].unsqueeze(0) # Shape: [1, 64, 129]
+            start_frame = i * chunk_frames
+            end_frame = (i + 1) * chunk_frames
+            chunk_tensor = full_pose_sequence[start_frame:end_frame].unsqueeze(0) # Shape: [1, chunk_frames, 129]
             
-            # Split: Upper Body (indices 0-39), Hands (indices 39-129)
-            upper_body_input_axis_angle = chunk_tensor[:, :, :39].reshape(1, 64, 13, 3)
-            hand_input_axis_angle = chunk_tensor[:, :, 39:].reshape(1, 64, 30, 3)
-            
-            # Convert to 6D
-            upper_body_input = rc.matrix_to_rotation_6d(rc.axis_angle_to_matrix(upper_body_input_axis_angle)).reshape(1, 64, 78).transpose(1, 2)
-            hand_input = rc.matrix_to_rotation_6d(rc.axis_angle_to_matrix(hand_input_axis_angle)).reshape(1, 64, 180).transpose(1, 2)
-            
-            # Model inference
-            reconstructed_upper_body_6d = _stage1_model_cache["upper_body_model"](upper_body_input)["rec_pose"]
-            reconstructed_hand_6d = _stage1_model_cache["hand_model"](hand_input)["rec_pose"]
-            
-            # Transpose back and convert to Axis-Angle
-            reconstructed_upper_body_6d = reconstructed_upper_body_6d.transpose(1, 2).reshape(1, 64, 13, 6)
-            reconstructed_hand_6d = reconstructed_hand_6d.transpose(1, 2).reshape(1, 64, 30, 6)
-            
-            reconstructed_upper_body = rc.matrix_to_axis_angle(rc.rotation_6d_to_matrix(reconstructed_upper_body_6d)).reshape(1, 64, 39)
-            reconstructed_hand = rc.matrix_to_axis_angle(rc.rotation_6d_to_matrix(reconstructed_hand_6d)).reshape(1, 64, 90)
-            
-            # Stitch reconstructed components back together
-            combined_reconstruction = torch.cat([reconstructed_upper_body, reconstructed_hand], dim=-1)
+            # Upper body
+            upper_body_target_pose = chunk_tensor[:, :, :39]
+            upper_body_target_pose_matrix = rc.axis_angle_to_matrix(upper_body_target_pose.reshape(batch_size, chunk_frames, upper_body_joint_count, 3))
+            upper_body_target_pose_6d = rc.matrix_to_rotation_6d(upper_body_target_pose_matrix).reshape(batch_size, chunk_frames, upper_body_joint_count * 6)
+            reconstructed_upper_body_pose_6d = _stage1_model_cache["upper_body_model"](upper_body_target_pose_6d)["rec_pose"].reshape(batch_size, chunk_frames, upper_body_joint_count, 6)
+            reconstructed_upper_body_pose_matrix = rc.rotation_6d_to_matrix(reconstructed_upper_body_pose_6d)
+            reconstructed_upper_body_pose_axis_angles = rc.matrix_to_axis_angle(reconstructed_upper_body_pose_matrix).reshape(batch_size * chunk_frames, -1)
+
+            # Hands
+            hands_target_pose = chunk_tensor[:, :, 39:129]
+            hands_target_pose_matrix = rc.axis_angle_to_matrix(hands_target_pose.reshape(batch_size, chunk_frames, hands_joint_count, 3))
+            hands_target_pose_6d = rc.matrix_to_rotation_6d(hands_target_pose_matrix).reshape(batch_size, chunk_frames, hands_joint_count * 6)
+            reconstructed_hands_pose_6d = _stage1_model_cache["hand_model"](hands_target_pose_6d)["rec_pose"].reshape(batch_size, chunk_frames, hands_joint_count, 6)
+            reconstructed_hands_pose_matrix = rc.rotation_6d_to_matrix(reconstructed_hands_pose_6d)
+            reconstructed_hands_pose_axis_angles = rc.matrix_to_axis_angle(reconstructed_hands_pose_matrix).reshape(batch_size * chunk_frames, -1)
+
+            combined_reconstruction = torch.cat([reconstructed_upper_body_pose_axis_angles, reconstructed_hands_pose_axis_angles], dim=-1)
             reconstructed_pose_list.append(combined_reconstruction.squeeze(0))
     
     if not reconstructed_pose_list:
-        return None, "Status: Input sequence too short for X-frame chunks based on the given config."
+        return None, "Status: Input sequence too short for chunk_frames chunks based on the given config."
 
     final_reconstructed_pose = torch.cat(reconstructed_pose_list, dim=0)
     reconstructed_loader = copy.deepcopy(original_loader)
