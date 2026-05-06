@@ -12,7 +12,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 custom_temp_dir = PROJECT_ROOT / "cache" / "gradio_tmp"
 os.makedirs(custom_temp_dir, exist_ok=True)
-os.environ['GRADIO_TEMP_DIR'] = custom_temp_dir
+os.environ['GRADIO_TEMP_DIR'] = str(custom_temp_dir)
 
 def main():
     js_controls = {
