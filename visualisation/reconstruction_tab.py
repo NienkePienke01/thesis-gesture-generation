@@ -79,7 +79,7 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
             #Debug
             raw_output = _stage1_model_cache["upper_body_model"](upper_body_target_pose_6d)["rec_pose"]
             movement_variance = torch.var(raw_output, dim=1).mean().item()
-            reconstructed_upper_body_pose_6d = raw_output.reshape(batch_size, chunk_frames, upper_body_joint_count, 6)
+            reconstructed_upper_body_pose_6d = raw_output.transpose(1, 2).reshape(batch_size, chunk_frames, upper_body_joint_count, 6)
             #
             # reconstructed_upper_body_pose_6d = _stage1_model_cache["upper_body_model"](upper_body_target_pose_6d)["rec_pose"].reshape(batch_size, chunk_frames, upper_body_joint_count, 6)
             reconstructed_upper_body_pose_matrix = rc.rotation_6d_to_matrix(reconstructed_upper_body_pose_6d)
@@ -89,7 +89,7 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
             hands_target_pose = chunk_tensor[:, :, 39:129]
             hands_target_pose_matrix = rc.axis_angle_to_matrix(hands_target_pose.reshape(batch_size, chunk_frames, hands_joint_count, 3))
             hands_target_pose_6d = rc.matrix_to_rotation_6d(hands_target_pose_matrix).reshape(batch_size, chunk_frames, hands_joint_count * 6)
-            reconstructed_hands_pose_6d = _stage1_model_cache["hand_model"](hands_target_pose_6d)["rec_pose"].reshape(batch_size, chunk_frames, hands_joint_count, 6)
+            reconstructed_hands_pose_6d = _stage1_model_cache["hand_model"](hands_target_pose_6d)["rec_pose"].transpose(1, 2).reshape(batch_size, chunk_frames, hands_joint_count, 6)
             reconstructed_hands_pose_matrix = rc.rotation_6d_to_matrix(reconstructed_hands_pose_6d)
             reconstructed_hands_pose_axis_angles = rc.matrix_to_axis_angle(reconstructed_hands_pose_matrix).reshape(batch_size * chunk_frames, -1)
 
