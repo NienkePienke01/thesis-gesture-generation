@@ -30,16 +30,16 @@ def load_models_from_files(hand_config, upper_body_config, hand_checkpoint, uppe
             hand_config_dict = json.load(f)
         hand_args = SimpleNamespace(**hand_config_dict)
         hand_model = RVQVAE(hand_args, **hand_config_dict["model_params"]).to(device)
-        hand_model.load_state_dict(torch.load(hand_checkpoint, map_location=device, weights_only=True))
-        hand_model.train()
+        hand_model.load_state_dict(torch.load(hand_checkpoint, map_location=device))
+        hand_model.eval()
 
         # Initialize Upper Body Model
         with open(upper_body_config, 'r') as f:
             upper_body_config_dict = json.load(f)
         upper_body_args = SimpleNamespace(**upper_body_config_dict)
         upper_body_model = RVQVAE(upper_body_args, **upper_body_config_dict["model_params"]).to(device)
-        upper_body_model.load_state_dict(torch.load(upper_body_checkpoint, map_location=device, weights_only=True))
-        upper_body_model.train()
+        upper_body_model.load_state_dict(torch.load(upper_body_checkpoint, map_location=device))
+        upper_body_model.eval()
 
         _stage1_model_cache["hand_model"] = hand_model
         _stage1_model_cache["upper_body_model"] = upper_body_model
