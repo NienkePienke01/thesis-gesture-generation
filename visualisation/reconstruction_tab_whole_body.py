@@ -17,7 +17,8 @@ os.environ['PYOPENGL_PLATFORM'] = 'egl'
 
 _stage1_model_cache = {
     "full_body_model": None,
-    "normalize": False
+    "normalize": False,
+    "stats": None
 }
 
 def load_model_from_files(full_config, full_body_checkpoint, device):
@@ -29,12 +30,17 @@ def load_model_from_files(full_config, full_body_checkpoint, device):
         with open(full_config, 'r') as f:
             full_config_dict = json.load(f)
         full_body_args = SimpleNamespace(**full_config_dict)
+        full_body_args.data = SimpleNamespace(**full_config_dict["data"])
         full_body_model = RVQVAE(full_body_args, **full_config_dict["model_params"]).to(device)
         full_body_model.load_state_dict(torch.load(full_body_checkpoint, map_location=device))
         full_body_model.eval()
 
         _stage1_model_cache["full_body_model"] = full_body_model
         _stage1_model_cache["normalize"] = full_body_args.normalize
+        if full_body_args.normalize:
+            stats_path = Path(full_body_args.data.train_lmdb).parent / "mean_and_std.pt"
+            full_body_args.stats_path = stats_path
+            _stage1_model_cache["stats"] = torch.load(full_body_args.stats_path, map_location=full_body_model.device)
         
         return "Status: Full Body model loaded successfully."
     except Exception as e:
@@ -71,6 +77,8 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
             #Debug
             if _stage1_model_cache["normalize"]:        
                 # do a forward pass to the model
+                norm_mean = _stage1_model_cache["stats"]["mean"]
+                norm_std = _stage1_model_cache["stats"]["std"]
                 model_output = model((full_body_target_pose_6d - model.norm_mean) / (model.norm_std)) # Normalize
                 reconstructed_pose = (model_output["rec_pose"] * (model.norm_std)) + model.norm_mean # De-Normalize
             else:

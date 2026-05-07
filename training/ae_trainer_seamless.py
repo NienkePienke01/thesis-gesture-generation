@@ -46,8 +46,6 @@ class SeamlessStage1Trainer:
             elif self.args.mode == "hands":
                 self.norm_mean = self.norm_mean[78:]
                 self.norm_std = self.norm_std[78:] + 1e-8
-            self.model.norm_mean = self.norm_mean # For inference
-            self.model.norm_std = self.norm_std # For inference
         elif self.normalize:
             raise FileNotFoundError(f"ERROR: Normalization stats not found at {str(args.stats_path)}.")
 
