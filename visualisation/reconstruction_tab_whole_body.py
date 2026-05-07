@@ -81,7 +81,7 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
             if i == 1:
                 print("---------DEBUG---------")
                 print(f"Movement Variance: {movement_variance:.8f}")
-                print(f"Additional Variance: {additional_variance:.8f}")
+                print(f"Additional Variance: {additional_variance}")
                 print(f"Full Body 6D Input Shape: {full_body_target_pose_6d.shape}")
                 print(f"Reshaped 6D Pose Shape: {reconstructed_full_body_pose_6d.shape}")
                 print(f"Max Axis Angle value: {reconstructed_full_body_pose_axis_angles.abs().max().item():.2f}")
