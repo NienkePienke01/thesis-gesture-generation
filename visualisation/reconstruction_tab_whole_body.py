@@ -79,8 +79,8 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
                 # do a forward pass to the model
                 norm_mean = _stage1_model_cache["stats"]["mean"]
                 norm_std = _stage1_model_cache["stats"]["std"]
-                model_output = model((full_body_target_pose_6d - model.norm_mean) / (model.norm_std)) # Normalize
-                reconstructed_pose = (model_output["rec_pose"] * (model.norm_std)) + model.norm_mean # De-Normalize
+                model_output = model((full_body_target_pose_6d - norm_mean) / (norm_std)) # Normalize
+                reconstructed_pose = (model_output["rec_pose"] * (norm_std)) + norm_mean # De-Normalize
             else:
                 model_output = model(full_body_target_pose_6d)
                 reconstructed_pose = full_body_target_pose_6d["rec_pose"]
