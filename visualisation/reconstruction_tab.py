@@ -78,6 +78,7 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
             upper_body_target_pose_6d = rc.matrix_to_rotation_6d(upper_body_target_pose_matrix).reshape(batch_size, chunk_frames, upper_body_joint_count * 6)
             #Debug
             raw_output = _stage1_model_cache["upper_body_model"](upper_body_target_pose_6d)["rec_pose"].transpose(1, 2)
+            print(raw_output)
             movement_variance = torch.var(raw_output, dim=1).mean().item()
             reconstructed_upper_body_pose_6d = raw_output.reshape(batch_size, chunk_frames, upper_body_joint_count, 6)
             #
