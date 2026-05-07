@@ -47,16 +47,19 @@ def train_model(rank, gpu_amount_size, shared_port, args):
         wandb.init(project=args.project, name=f"{args.project}_{args.mode}_ddp_run", config=vars(args))
     
     actual_gpu_id = args.gpus[rank]
-    trainer = SeamlessStage1Trainer(args, actual_gpu_id)
     
     print("Setting up data loaders...")
     train_dataset = SeamlessDataLoader(args.data.train_lmdb, stage=1)
     train_sampler = DistributedSampler(train_dataset, num_replicas=gpu_amount_size, rank=rank)
     train_loader = DataLoader(train_dataset, batch_size=args.training_params.batch_size, sampler=train_sampler, pin_memory=True)
-    
+
     val_dataset = SeamlessDataLoader(args.data.val_lmdb, stage=1)
     validation_loader = DataLoader(val_dataset, batch_size=args.training_params.batch_size, pin_memory=True)
     
+    stats_path = Path(args.data.train_lmdb).parent / "mean_and_std.pt"
+    args.stats_path = stats_path
+    trainer = SeamlessStage1Trainer(args, actual_gpu_id)
+
     best_validation_loss = float('inf')
     # training loop
     top_k_checkpoints = []

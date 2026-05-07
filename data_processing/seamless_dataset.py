@@ -107,7 +107,7 @@ def main():
     Used to do quick testing of this script
     """
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset_path", default="data/seeamless/downloads/train_all_moi", type=str, help="The path to the dataset relative to the project root")
+    parser.add_argument("--dataset_path", default="data/seamless/downloads/train_all_moi", type=str, help="The path to the dataset relative to the project root")
     cli_args = parser.parse_args()
 
     dataset = SeamlessDataset(PROJECT_ROOT / cli_args.dataset_path)

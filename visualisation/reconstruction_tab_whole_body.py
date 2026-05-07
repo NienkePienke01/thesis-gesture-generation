@@ -16,7 +16,8 @@ import data_processing.utils as utils
 os.environ['PYOPENGL_PLATFORM'] = 'egl'
 
 _stage1_model_cache = {
-    "full_body_model": None
+    "full_body_model": None,
+    "normalize": False
 }
 
 def load_model_from_files(full_config, full_body_checkpoint, device):
@@ -33,6 +34,7 @@ def load_model_from_files(full_config, full_body_checkpoint, device):
         full_body_model.eval()
 
         _stage1_model_cache["full_body_model"] = full_body_model
+        _stage1_model_cache["normalize"] = full_body_args.normalize
         
         return "Status: Full Body model loaded successfully."
     except Exception as e:
@@ -56,6 +58,7 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
     num_chunks = min([num_chunks, 5])
     #
     with torch.no_grad():
+        model = _stage1_model_cache["full_body_model"]
         for i in range(num_chunks):
             start_frame = i * chunk_frames
             end_frame = (i + 1) * chunk_frames
@@ -66,7 +69,14 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
             full_body_target_pose_matrix = rc.axis_angle_to_matrix(full_body_target_pose.reshape(batch_size, chunk_frames, full_body_joint_count, 3))
             full_body_target_pose_6d = rc.matrix_to_rotation_6d(full_body_target_pose_matrix).reshape(batch_size, chunk_frames, full_body_joint_count * 6)
             #Debug
-            raw_output = _stage1_model_cache["full_body_model"](full_body_target_pose_6d)["rec_pose"].transpose(1, 2)
+            if _stage1_model_cache["normalize"]:        
+                # do a forward pass to the model
+                model_output = model((full_body_target_pose_6d - model.norm_mean) / (model.norm_std)) # Normalize
+                reconstructed_pose = (model_output["rec_pose"] * (model.norm_std)) + model.norm_mean # De-Normalize
+            else:
+                model_output = model(full_body_target_pose_6d)
+                reconstructed_pose = full_body_target_pose_6d["rec_pose"]
+            raw_output = reconstructed_pose.transpose(1, 2)
             additional_variance = torch.var(raw_output, dim=1)
             movement_variance = torch.var(raw_output, dim=1).mean().item()
             reconstructed_full_body_pose_6d = raw_output.reshape(batch_size, chunk_frames, full_body_joint_count, 6)

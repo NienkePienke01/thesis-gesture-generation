@@ -5,6 +5,7 @@ from models.rvq import RVQVAE
 from optimizers.loss_factory import GeodesicLoss, get_loss_func
 from data_processing.utils import get_smplh_model
 from utils import rotation_conversions as rc
+from pathlib import Path
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 class SeamlessStage1Trainer:
@@ -32,6 +33,23 @@ class SeamlessStage1Trainer:
         for idx in self.keep_indices:
             self.body_indices.extend([idx*3, idx*3+1, idx*3+2])
         self.body_indices = torch.tensor(self.body_indices, device=self.device)
+        
+        # Normalisation stuff
+        self.normalize = args.normalize
+        if args.stats_path.exists():
+            stats = torch.load(args.stats_path, map_location=self.device)
+            self.norm_mean = stats["mean"]
+            self.norm_std = stats["std"]
+            if self.args.mode == "upper_body":
+                self.norm_mean = self.norm_mean[:78]
+                self.norm_std = self.norm_std[:78]
+            elif self.args.mode == "hands":
+                self.norm_mean = self.norm_mean[78:]
+                self.norm_std = self.norm_std[78:] + 1e-8
+            self.register_buffer("norm_mean", self.norm_mean) # For inference
+            self.register_buffer("norm_std", self.norm_std) # For inference
+        elif self.normalize:
+            raise FileNotFoundError(f"ERROR: Normalization stats not found at {str(args.stats_path)}.")
 
     def train_step(self, dict_data):
         """
@@ -55,10 +73,15 @@ class SeamlessStage1Trainer:
         # conversion from axis-angle to 6D
         target_pose_matrix = rc.axis_angle_to_matrix(target_pose.reshape(batch_size, frames, joint_count, 3))
         target_pose_6d = rc.matrix_to_rotation_6d(target_pose_matrix).reshape(batch_size, frames, joint_count * 6)
+        if self.normalize:        
+            # do a forward pass to the model
+            model_output = self.model((target_pose_6d - self.norm_mean) / (self.norm_std)) # Normalize
+            reconstructed_pose = (model_output["rec_pose"] * (self.norm_std)) + self.norm_mean # De-Normalize
+        else:
+            model_output = self.model(target_pose_6d)
+            reconstructed_pose = model_output["rec_pose"]
         
-        # do a forward pass to the model
-        model_output = self.model(target_pose_6d)
-        reconstructed_pose_6d = model_output["rec_pose"].reshape(batch_size, frames, joint_count, 6)
+        reconstructed_pose_6d = reconstructed_pose.transpose(1, 2).reshape(batch_size, frames, joint_count, 6) # Transpose is important here to get the right Batch, frames, channel
         
         # convert back to matrix form for the loss calculations
         reconstructed_pose_matrix = rc.rotation_6d_to_matrix(reconstructed_pose_6d)
@@ -129,12 +152,18 @@ class SeamlessStage1Trainer:
                 
             batch_size, frames = target_pose.shape[0], target_pose.shape[1]
 
+            # conversion from axis-angle to 6D
             target_pose_matrix = rc.axis_angle_to_matrix(target_pose.reshape(batch_size, frames, joint_count, 3))
             target_pose_6d = rc.matrix_to_rotation_6d(target_pose_matrix).reshape(batch_size, frames, joint_count * 6)
-            
-            model_output = self.model(target_pose_6d)
-            raw_reconstructed_pose = model_output["rec_pose"].transpose(1, 2)
-            reconstructed_pose_6d = raw_reconstructed_pose.reshape(batch_size, frames, joint_count, 6)
+            if self.normalize:        
+                # do a forward pass to the model
+                model_output = self.model((target_pose_6d - self.norm_mean) / (self.norm_std + 1e-8))
+                reconstructed_pose = (model_output["rec_pose"] * self.norm_std) + self.norm_mean
+            else:
+                model_output = self.model(target_pose_6d)
+                reconstructed_pose = model_output["rec_pose"]
+        
+            reconstructed_pose_6d = reconstructed_pose.transpose(1, 2).reshape(batch_size, frames, joint_count, 6) # Transpose is important here to get the right Batch, frames, channel
             reconstructed_pose_matrix = rc.rotation_6d_to_matrix(reconstructed_pose_6d)
             
             # reconstruction loss
