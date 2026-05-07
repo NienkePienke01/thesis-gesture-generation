@@ -67,6 +67,7 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
             full_body_target_pose_6d = rc.matrix_to_rotation_6d(full_body_target_pose_matrix).reshape(batch_size, chunk_frames, full_body_joint_count * 6)
             #Debug
             raw_output = _stage1_model_cache["full_body_model"](full_body_target_pose_6d)["rec_pose"].transpose(1, 2)
+            additional_variance = torch.var(raw_output, dim=1)
             movement_variance = torch.var(raw_output, dim=1).mean().item()
             reconstructed_full_body_pose_6d = raw_output.reshape(batch_size, chunk_frames, full_body_joint_count, 6)
             #
@@ -80,6 +81,7 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
             if i == 1:
                 print("---------DEBUG---------")
                 print(f"Movement Variance: {movement_variance:.8f}")
+                print(f"Additional Variance: {additional_variance:.8f}")
                 print(f"Full Body 6D Input Shape: {full_body_target_pose_6d.shape}")
                 print(f"Reshaped 6D Pose Shape: {reconstructed_full_body_pose_6d.shape}")
                 print(f"Max Axis Angle value: {reconstructed_full_body_pose_axis_angles.abs().max().item():.2f}")
