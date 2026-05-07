@@ -40,7 +40,7 @@ def load_model_from_files(full_config, full_body_checkpoint, device):
         if full_body_args.normalize:
             stats_path = Path(full_body_args.data.train_lmdb).parent / "mean_and_std.pt"
             full_body_args.stats_path = stats_path
-            _stage1_model_cache["stats"] = torch.load(full_body_args.stats_path, map_location=full_body_model.device)
+            _stage1_model_cache["stats"] = torch.load(full_body_args.stats_path, map_location=device)
         
         return "Status: Full Body model loaded successfully."
     except Exception as e:
