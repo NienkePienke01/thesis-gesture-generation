@@ -106,7 +106,7 @@ def split_source(args):
     temp_env = lmdb.open(str(output_train), readonly=True, lock=False)    
     with temp_env.begin() as txn:
         cursor = txn.cursor()
-        for i, _, value in enumerate(cursor):
+        for i, (key, value) in enumerate(cursor):
             entry = pickle.loads(value)
             pose_axis_angles = torch.from_numpy(entry["pose"]).float()
             if i == 0:
