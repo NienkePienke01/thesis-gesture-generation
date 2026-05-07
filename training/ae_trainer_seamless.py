@@ -132,8 +132,8 @@ class SeamlessStage1Trainer:
             target_pose_matrix = rc.axis_angle_to_matrix(target_pose.reshape(batch_size, frames, joint_count, 3))
             target_pose_6d = rc.matrix_to_rotation_6d(target_pose_matrix).reshape(batch_size, frames, joint_count * 6)
             
-            model_output = self.model(target_pose_6d).transpose(1, 2)
-            reconstructed_pose_6d = model_output["rec_pose"].reshape(batch_size, frames, joint_count, 6)
+            model_output = self.model(target_pose_6d)["rec_pose"].transpose(1, 2)
+            reconstructed_pose_6d = model_output.reshape(batch_size, frames, joint_count, 6)
             reconstructed_pose_matrix = rc.rotation_6d_to_matrix(reconstructed_pose_6d)
             
             # reconstruction loss
