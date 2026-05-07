@@ -127,7 +127,6 @@ def split_source(args):
         save_path = cache_dir / f"{args.output_name}" / "mean_and_std.pt"
         torch.save(stats, save_path)
         logger.info(f"Mean {mean} and STD {std} saved to {save_path}")
-        temp_env.close()
 
 
 
