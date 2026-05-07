@@ -110,7 +110,7 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
     final_reconstructed_pose = torch.cat(reconstructed_pose_list, dim=0)
     reconstructed_loader = utils.SeamlessSMPLHLoader(target_npz_file, device=device)
     reconstructed_loader.overwrite_with_reconstructed_pose(final_reconstructed_pose)
-
+    
     output_video_path = utils.generate_reconstruction_comparison_video(original_loader, reconstructed_loader, progress=progress)
     
     return output_video_path, "Status: Side-by-Side Reconstruction Complete."

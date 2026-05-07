@@ -105,7 +105,13 @@ def train_model(rank, gpu_amount_size, shared_port, args):
             # Periodic Backup
             if epoch % args.periodic_backup_after_x_epochs == 0:
                 backup_path = local_checkpoint_dir / f"periodic_backup_epoch_{epoch}.bin"
+                complete_backup_path = local_checkpoint_dir / f"periodic_backup_complete_{epoch}.bin"
                 torch.save(trainer.model.module.state_dict(), backup_path)
+                torch.save({'epoch': epoch,
+                            'model_state_dict': trainer.model.module.state_dict(),
+                            'optimizer_state_dict': trainer.opt.state_dict(),
+                            'scheduler_state_dict': trainer.scheduler.state_dict(),
+                            'loss': avg_validation_loss}, complete_backup_path)
 
         trainer.scheduler.step()
     
@@ -144,7 +150,7 @@ def main():
         mp.spawn(train_model, args=(gpu_amount_size, shared_port, args), nprocs=gpu_amount_size)
     else:
         print("Running with 1 gpu")
-        train_model(0, 1, args)
+        train_model(0, 1, shared_port, args)
 
 if __name__ == "__main__":
     main()
