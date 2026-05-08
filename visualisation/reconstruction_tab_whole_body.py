@@ -60,9 +60,6 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
     full_body_joint_count = 43
     batch_size = 1 # We do not batch here, so its just hard set to 1
     
-    # For debugging
-    num_chunks = min([num_chunks, 5])
-    #
     with torch.no_grad():
         model = _stage1_model_cache["full_body_model"]
         for i in range(num_chunks):
@@ -85,8 +82,6 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
                 model_output = model(full_body_target_pose_6d)
                 reconstructed_pose = full_body_target_pose_6d["rec_pose"]
             raw_output = reconstructed_pose.transpose(1, 2)
-            additional_variance = torch.var(raw_output, dim=1)
-            movement_variance = torch.var(raw_output, dim=1).mean().item()
             reconstructed_full_body_pose_6d = raw_output.reshape(batch_size, chunk_frames, full_body_joint_count, 6)
             #
             # reconstructed_full_body_pose_6d = _stage1_model_cache["full_body_model"](full_body_target_pose_6d)["rec_pose"].reshape(batch_size, chunk_frames, full_body_joint_count, 6)
@@ -94,15 +89,6 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
             reconstructed_full_body_pose_axis_angles = rc.matrix_to_axis_angle(reconstructed_full_body_pose_matrix).reshape(batch_size * chunk_frames, -1)
 
             reconstructed_pose_list.append(reconstructed_full_body_pose_axis_angles.squeeze(0))
-
-            # Debug
-            if i == 1:
-                print("---------DEBUG---------")
-                print(f"Movement Variance: {movement_variance:.8f}")
-                print(f"Additional Variance: {additional_variance}")
-                print(f"Full Body 6D Input Shape: {full_body_target_pose_6d.shape}")
-                print(f"Reshaped 6D Pose Shape: {reconstructed_full_body_pose_6d.shape}")
-                print(f"Max Axis Angle value: {reconstructed_full_body_pose_axis_angles.abs().max().item():.2f}")
     
     if not reconstructed_pose_list:
         return None, "Status: Input sequence too short for chunk_frames chunks based on the given config."
