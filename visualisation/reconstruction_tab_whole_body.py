@@ -91,7 +91,7 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
 
     final_6d = torch.cat(all_chunks_6d, dim=1)
     final_6d = final_6d.permute(0, 2, 1) 
-    final_6d = torch.nn.functional.interpolate(final_6d, size=final_6d.shape[-1], mode='linear', align_corners=False)
+    final_6d = torch.nn.functional.interpolate(final_6d, size=num_frames, mode='linear', align_corners=False)
     final_6d = final_6d.permute(0, 2, 1)
 
     reconstructed_6d_reshaped = final_6d.reshape(-1, full_body_joint_count, 6)
