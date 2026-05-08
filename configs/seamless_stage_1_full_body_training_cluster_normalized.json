@@ -1,5 +1,5 @@
 {
-    "project": "seamless_stage1_training_full_body_normalized",
+    "project": "seamless_stage1_training_full_body_leaky_relu",
     "mode": "full",
     "device": "cuda",
     "gpus": [0, 1, 2, 3],
