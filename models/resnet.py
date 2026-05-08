@@ -34,8 +34,8 @@ class ResConv1DBlock(nn.Module):
             self.activation2 = nn.ReLU()
         
         elif activation == "leaky_relu":
-            self.activation1 = nn.LeakyReLU(0.2, inplace=True)
-            self.activation2 = nn.LeakyReLU(0.2, inplace=True)
+            self.activation1 = nn.LeakyReLU(0.2)
+            self.activation2 = nn.LeakyReLU(0.2)
 
         elif activation == "silu":
             self.activation1 = nonlinearity()
