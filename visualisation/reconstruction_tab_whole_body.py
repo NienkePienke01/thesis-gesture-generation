@@ -59,6 +59,7 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
     reconstructed_pose_list = []
     full_body_joint_count = 43
     batch_size = 1 # We do not batch here, so its just hard set to 1
+    all_chunks_6d = []
     
     with torch.no_grad():
         model = _stage1_model_cache["full_body_model"]
@@ -81,19 +82,22 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
             else:
                 model_output = model(full_body_target_pose_6d)
                 reconstructed_pose = full_body_target_pose_6d["rec_pose"]
-            raw_output = reconstructed_pose.transpose(1, 2)
-            reconstructed_full_body_pose_6d = raw_output.reshape(batch_size, chunk_frames, full_body_joint_count, 6)
-            #
-            # reconstructed_full_body_pose_6d = _stage1_model_cache["full_body_model"](full_body_target_pose_6d)["rec_pose"].reshape(batch_size, chunk_frames, full_body_joint_count, 6)
-            reconstructed_full_body_pose_matrix = rc.rotation_6d_to_matrix(reconstructed_full_body_pose_6d)
-            reconstructed_full_body_pose_axis_angles = rc.matrix_to_axis_angle(reconstructed_full_body_pose_matrix).reshape(batch_size * chunk_frames, -1)
 
-            reconstructed_pose_list.append(reconstructed_full_body_pose_axis_angles.squeeze(0))
+            raw_output = reconstructed_pose.transpose(1, 2)
+            all_chunks_6d.append(raw_output)
     
-    if not reconstructed_pose_list:
+    if not all_chunks_6d:
         return None, "Status: Input sequence too short for chunk_frames chunks based on the given config."
 
-    final_reconstructed_pose = torch.cat(reconstructed_pose_list, dim=0)
+    final_6d = torch.cat(all_chunks_6d, dim=1)
+    final_6d = final_6d.permute(0, 2, 1) 
+    final_6d = torch.nn.functional.interpolate(final_6d, size=final_6d.shape[-1], mode='linear', align_corners=False)
+    final_6d = final_6d.permute(0, 2, 1)
+
+    reconstructed_6d_reshaped = final_6d.reshape(-1, full_body_joint_count, 6)
+    reconstructed_matrix = rc.rotation_6d_to_matrix(reconstructed_6d_reshaped)
+    final_reconstructed_pose = rc.matrix_to_axis_angle(reconstructed_matrix).reshape(final_6d.shape[1], -1)
+
     reconstructed_loader = utils.SeamlessSMPLHLoader(target_npz_file, device=device)
     reconstructed_loader.overwrite_with_reconstructed_pose(final_reconstructed_pose)
     
