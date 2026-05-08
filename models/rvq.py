@@ -1,7 +1,7 @@
 import random
 
 import torch.nn as nn
-from .encdec import Encoder, Decoder, Encoder2d, Decoder2d, Encoder_s, Decoder_s
+from .encdec import Encoder, Decoder, Encoder2d, Decoder2d, Encoder_s, Decoder_s, Decoder_Custom, Encoder_Custom
 from .residual_vq import ResidualVQ, ResidualVQ_hrmg, ResidualVQ_2D
 import torch
 # from .causal_decoder import Causal_Decoder
@@ -654,7 +654,7 @@ class RVQVAE(nn.Module):
         self.num_code = nb_code
 
         # self.quant = args.quantizer
-        self.encoder = Encoder(input_width,
+        self.encoder = Encoder_Custom(input_width,
                                output_emb_width,
                                down_t,
                                stride_t,
@@ -663,7 +663,7 @@ class RVQVAE(nn.Module):
                                dilation_growth_rate,
                                activation=activation,
                                norm=norm)
-        self.decoder = Decoder(input_width,
+        self.decoder = Decoder_Custom(input_width,
                                output_emb_width,
                                down_t,
                                stride_t,
@@ -680,7 +680,7 @@ class RVQVAE(nn.Module):
         # self.decoder = Causal_Decoder(input_width, output_emb_width, down_t, stride_t, width, depth,
         #                        dilation_growth_rate, activation=activation, norm=norm)
         rvqvae_config = {
-            'num_quantizers': 6,
+            'num_quantizers': 4, # Used to be 6 for semtalk altered to 4 to match dyadit
             'shared_codebook': False,
             'quantize_dropout_prob': 0.2,
             'quantize_dropout_cutoff_index': 0,

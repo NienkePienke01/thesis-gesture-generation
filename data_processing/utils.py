@@ -570,4 +570,5 @@ def generate_reconstruction_comparison_video(loader_original, loader_reconstruct
 
     renderer.delete()
     video_writer.release()
+
     return video_path
