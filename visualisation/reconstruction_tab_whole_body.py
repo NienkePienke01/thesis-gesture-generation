@@ -56,13 +56,13 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
     chunk_frames = 64
     num_frames = full_pose_sequence.shape[0]
     num_chunks = num_frames // chunk_frames
+    num_chunks = min([num_chunks, 5]) # DEBUG PURPOSES
     total_chunked_frames = num_chunks * chunk_frames
     reconstructed_pose_list = []
     full_body_joint_count = 43
     batch_size = 1 # We do not batch here, so its just hard set to 1
     all_chunks_6d = []
     
-    num_chunks = min(num_chunks, 5) # For debugging
     with torch.no_grad():
         model = _stage1_model_cache["full_body_model"]
         for i in range(num_chunks):
@@ -86,17 +86,22 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
                 reconstructed_pose = model_output["rec_pose"]
 
             raw_output = reconstructed_pose.transpose(1, 2)
+            print(f"Raw output shape: {raw_output.shape}")
             all_chunks_6d.append(raw_output)
     
     if not all_chunks_6d:
         return None, "Status: Input sequence too short for chunk_frames chunks based on the given .npz file."
 
     final_6d = torch.cat(all_chunks_6d, dim=2)
+    print(f"final_6d shape: {final_6d.shape}")
 
     final_6d = torch.nn.functional.interpolate(final_6d, size=total_chunked_frames, mode='linear', align_corners=False)
+    print(f"final_6d after interpolate shape: {final_6d.shape}")
     final_6d = final_6d.permute(0, 2, 1)
+    print(f"final_6d after permute shape: {final_6d.shape}")
 
     reconstructed_6d_reshaped = final_6d.reshape(-1, full_body_joint_count, 6)
+    print(f"reconstructed_6d_reshaped shape: {final_6d.shape}")
 
     reconstructed_matrix = rc.rotation_6d_to_matrix(reconstructed_6d_reshaped)
     final_reconstructed_pose = rc.matrix_to_axis_angle(reconstructed_matrix).reshape(final_6d.shape[1], -1)
