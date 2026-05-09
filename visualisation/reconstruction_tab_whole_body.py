@@ -91,15 +91,10 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
     if not all_chunks_6d:
         return None, "Status: Input sequence too short for chunk_frames chunks based on the given .npz file."
 
-    final_6d = torch.cat(all_chunks_6d, dim=1)
-    print(f"DEBUG 1 (After Cat): {final_6d.shape}") # [1, Frames, Channels]
-
-    final_6d = final_6d.permute(0, 2, 1) 
-    print(f"DEBUG 2 (Pre-Interpolate): {final_6d.shape}") # [1, Channels, Frames]
+    final_6d = torch.cat(all_chunks_6d, dim=2)
 
     final_6d = torch.nn.functional.interpolate(final_6d, size=total_chunked_frames, mode='linear', align_corners=False)
     final_6d = final_6d.permute(0, 2, 1)
-    print(f"DEBUG 3 (Post-Interpolate): {final_6d.shape}") # [1, Frames, Channels]
 
     reconstructed_6d_reshaped = final_6d.reshape(-1, full_body_joint_count, 6)
 
