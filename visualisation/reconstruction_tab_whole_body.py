@@ -56,6 +56,7 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
     chunk_frames = 64
     num_frames = full_pose_sequence.shape[0]
     num_chunks = num_frames // chunk_frames
+    total_chunked_frames = num_chunks * chunk_frames
     reconstructed_pose_list = []
     full_body_joint_count = 43
     batch_size = 1 # We do not batch here, so its just hard set to 1
@@ -93,7 +94,7 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
     final_6d = torch.cat(all_chunks_6d, dim=1)
     final_6d = final_6d.permute(0, 2, 1)
 
-    final_6d = torch.nn.functional.interpolate(final_6d, size=num_frames, mode='linear', align_corners=False)
+    final_6d = torch.nn.functional.interpolate(final_6d, size=total_chunked_frames, mode='linear', align_corners=False)
     final_6d = final_6d.permute(0, 2, 1)
 
     reconstructed_6d_reshaped = final_6d.reshape(-1, full_body_joint_count, 6)
