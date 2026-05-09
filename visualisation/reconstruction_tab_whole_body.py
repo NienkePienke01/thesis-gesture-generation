@@ -85,25 +85,20 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
                 model_output = model(full_body_target_pose_6d)
                 reconstructed_pose = model_output["rec_pose"]
 
-            raw_output = reconstructed_pose.transpose(1, 2)
-            print(f"Raw output shape: {raw_output.shape}")
+            raw_output = reconstructed_pose.transpose(1, 2) # [batch, channels, chunk_frames]
             all_chunks_6d.append(raw_output)
     
     if not all_chunks_6d:
         return None, "Status: Input sequence too short for chunk_frames chunks based on the given .npz file."
 
-    final_6d = torch.cat(all_chunks_6d, dim=2)
-    print(f"final_6d shape: {final_6d.shape}")
+    final_6d = torch.cat(all_chunks_6d, dim=2) # Concatenate all frames to each other [batch, channels, total_chunked_frames]
 
     final_6d = torch.nn.functional.interpolate(final_6d, size=total_chunked_frames, mode='linear', align_corners=False)
-    print(f"final_6d after interpolate shape: {final_6d.shape}")
-    final_6d = final_6d.permute(0, 2, 1)
-    print(f"final_6d after permute shape: {final_6d.shape}")
+    reconstructed_6d = final_6d.reshape(batch_size, full_body_joint_count, 6, -1) # [1, 43, 6, 320]
+    reconstructed_6d = reconstructed_6d.permute(0, 3, 1, 2) # [1, 320, 43, 6]
 
-    reconstructed_6d_reshaped = final_6d.reshape(-1, full_body_joint_count, 6)
-    print(f"reconstructed_6d_reshaped shape: {final_6d.shape}")
-
-    reconstructed_matrix = rc.rotation_6d_to_matrix(reconstructed_6d_reshaped)
+    # Convert to axis angle for smpl
+    reconstructed_matrix = rc.rotation_6d_to_matrix(reconstructed_6d)
     final_reconstructed_pose = rc.matrix_to_axis_angle(reconstructed_matrix).reshape(final_6d.shape[1], -1)
 
     reconstructed_loader = utils.SeamlessSMPLHLoader(target_npz_file, device=device)
