@@ -85,7 +85,7 @@ class SeamlessStage1Trainer:
         reconstructed_pose_matrix = rc.rotation_6d_to_matrix(reconstructed_pose_6d)
         
         # compute the geodesic loss which compares rotation matrices directly
-        loss_rec = self.rec_loss(reconstructed_pose_matrix, target_pose_matrix) * self.args.loss_weights.rec_weight * self.args.loss_weights.rec_pos_weight
+        loss_rec = self.rec_loss(reconstructed_pose_matrix, target_pose_matrix) * self.args.loss_weights.rec_weight
 
         # compute the temporal loss which is the L1 loss that checks the difference between consecutive frames
         loss_vel = self.vel_loss(reconstructed_pose_matrix[:, 1:] - reconstructed_pose_matrix[:, :-1], target_pose_matrix[:, 1:] - target_pose_matrix[:, :-1])
@@ -94,14 +94,14 @@ class SeamlessStage1Trainer:
         
         # the vertices loss (kinematic loss)
         loss_ver = 0
-        if self.args.loss_weights.rec_ver_weight > 0:
+        if self.args.loss_weights.ver_weight > 0:
             # convert predicted and target matrices to axis angle for prepare_smpl_input
             reconstructed_pose_axis_angle = rc.matrix_to_axis_angle(reconstructed_pose_matrix).reshape(batch_size * frames, -1)
             target_pose_axis_angle = rc.matrix_to_axis_angle(target_pose_matrix).reshape(batch_size * frames, -1)
             # get vertices
             predicted_verts = self.smplh(**self.prepare_smpl_input(reconstructed_pose_axis_angle, self.args.mode)).vertices
             target_verts = self.smplh(**self.prepare_smpl_input(target_pose_axis_angle, self.args.mode)).vertices
-            loss_ver = self.ver_loss(predicted_verts, target_verts) * self.args.loss_weights.rec_weight * self.args.loss_weights.rec_ver_weight
+            loss_ver = self.ver_loss(predicted_verts, target_verts) * self.args.loss_weights.ver_weight
 
             # reshape for temporal losses
             predicted_verts = predicted_verts.reshape(batch_size, frames, -1, 3)
@@ -109,10 +109,15 @@ class SeamlessStage1Trainer:
 
             vertices_vel_loss = self.vel_loss(predicted_verts[:, 1:] - predicted_verts[:, :-1], target_verts[:, 1:] - target_verts[:, :-1])
             vertices_acc_loss = self.vel_loss(predicted_verts[:, 2:] + predicted_verts[:, :-2] - 2 * predicted_verts[:, 1:-1], target_verts[:, 2:] + target_verts[:, :-2] - 2 * target_verts[:, 1:-1])
-            loss_ver += (vertices_vel_loss + vertices_acc_loss) * self.args.loss_weights.rec_weight * self.args.loss_weights.rec_ver_weight
+            loss_ver += (vertices_vel_loss + vertices_acc_loss) * self.args.loss_weights.ver_weight
             
         # commitment loss
         loss_commit = model_output["embedding_loss"]
+        
+        # add the weights (for loss_ver and loss_rec it is done in the calculations)
+        loss_vel = loss_vel * self.args.loss_weights.vel_weight
+        loss_acc = loss_acc * self.args.loss_weights.acc_weight
+        loss_commit = loss_commit * self.args.loss_weights.commit_weight
         
         # backward pass
         total_loss = loss_rec + loss_vel + loss_acc + loss_commit + loss_ver
@@ -165,18 +170,18 @@ class SeamlessStage1Trainer:
             reconstructed_pose_matrix = rc.rotation_6d_to_matrix(reconstructed_pose_6d)
             
             # reconstruction loss
-            loss_rec = self.rec_loss(reconstructed_pose_matrix, target_pose_matrix) * self.args.loss_weights.rec_weight * self.args.loss_weights.rec_pos_weight
+            loss_rec = self.rec_loss(reconstructed_pose_matrix, target_pose_matrix) * self.args.loss_weights.rec_weight
             
             # 4. vertex los
             loss_ver = 0
-            if self.args.loss_weights.rec_ver_weight > 0:
+            if self.args.loss_weights.ver_weight > 0:
                 # convert predicted and target matrices to axis angle for prepare_smpl_input
                 reconstructed_pose_axis_angle = rc.matrix_to_axis_angle(reconstructed_pose_matrix).reshape(batch_size * frames, -1)
                 target_pose_axis_angle = rc.matrix_to_axis_angle(target_pose_matrix).reshape(batch_size * frames, -1)
                 # get vertices
                 predicted_verts = self.smplh(**self.prepare_smpl_input(reconstructed_pose_axis_angle, self.args.mode)).vertices
                 target_verts = self.smplh(**self.prepare_smpl_input(target_pose_axis_angle, self.args.mode)).vertices
-                loss_ver = self.ver_loss(predicted_verts, target_verts) * self.args.loss_weights.rec_weight * self.args.loss_weights.rec_ver_weight
+                loss_ver = self.ver_loss(predicted_verts, target_verts) * self.args.loss_weights.ver_weight
 
                 # reshape for temporal losses
                 predicted_verts = predicted_verts.reshape(batch_size, frames, -1, 3)
@@ -184,7 +189,7 @@ class SeamlessStage1Trainer:
 
                 vertices_vel_loss = self.vel_loss(predicted_verts[:, 1:] - predicted_verts[:, :-1], target_verts[:, 1:] - target_verts[:, :-1])
                 vertices_acc_loss = self.vel_loss(predicted_verts[:, 2:] + predicted_verts[:, :-2] - 2 * predicted_verts[:, 1:-1], target_verts[:, 2:] + target_verts[:, :-2] - 2 * target_verts[:, 1:-1])
-                loss_ver += (vertices_vel_loss + vertices_acc_loss) * self.args.loss_weights.rec_weight * self.args.loss_weights.rec_ver_weight
+                loss_ver += (vertices_vel_loss + vertices_acc_loss) * self.args.loss_weights.ver_weight
 
             loss_commit = model_output["embedding_loss"]
             total_loss = loss_rec + loss_commit + loss_ver

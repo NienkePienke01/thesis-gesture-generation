@@ -71,7 +71,7 @@ The project utilizes two primary JSON configuration files to manage the data pip
 #### loss_weights
 * **rec_weight**: The multiplier for reconstruction-related losses.
 * **rec_pos_weight**: The specific weight for **Geodesic Loss**
-* **rec_ver_weight**: The weight for the **Vertex Loss**
+* **ver_weight**: The weight for the **Vertex Loss**
 ---
 
 ## Setup and Installation

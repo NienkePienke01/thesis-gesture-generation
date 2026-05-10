@@ -35,7 +35,9 @@
 
     "loss_weights": {
         "rec_weight": 1,
-        "rec_pos_weight": 1,
-        "rec_ver_weight": 2
+        "ver_weight": 2,
+        "vel_weight": 1,
+        "acc_weight": 1,
+        "commit_weight": 1
     }
 }
