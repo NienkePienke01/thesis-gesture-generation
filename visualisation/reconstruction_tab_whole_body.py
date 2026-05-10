@@ -100,7 +100,7 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
     # Convert to axis angle for smpl
     reconstructed_matrix = rc.rotation_6d_to_matrix(reconstructed_6d)
     final_reconstructed_pose = rc.matrix_to_axis_angle(reconstructed_matrix).reshape(final_6d.shape[1], -1)
-    print(f"Final reconstructed shape {final_reconstructed_pose}")
+    print(f"Final reconstructed shape {final_reconstructed_pose.shape}")
 
     reconstructed_loader = utils.SeamlessSMPLHLoader(target_npz_file, device=device)
     reconstructed_loader.overwrite_with_reconstructed_pose(final_reconstructed_pose)
