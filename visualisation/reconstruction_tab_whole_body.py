@@ -98,7 +98,7 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
     print(f"reconstructed_6d shape {reconstructed_6d.shape}")
     # Convert to axis angle for smpl
     reconstructed_matrix = rc.rotation_6d_to_matrix(reconstructed_6d)
-    final_reconstructed_pose = rc.matrix_to_axis_angle(reconstructed_matrix).reshape(batch_size * chunk_frames, -1) # [channels, frames]
+    final_reconstructed_pose = rc.matrix_to_axis_angle(reconstructed_matrix).reshape(batch_size * total_chunked_frames, -1) # [channels, frames]
     print(f"Final reconstructed shape {final_reconstructed_pose.shape}")
 
     reconstructed_loader = utils.SeamlessSMPLHLoader(target_npz_file, device=device)
@@ -108,64 +108,63 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
     
     return output_video_path, "Status: Side-by-Side Reconstruction Complete."
 
-# def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
-#     if _stage1_model_cache["full_body_model"] is None:
-#         return None, "Status: Please load the model first."
+def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
+    if _stage1_model_cache["full_body_model"] is None:
+        return None, "Status: Please load the model first."
 
-#     original_loader = utils.SeamlessSMPLHLoader(target_npz_file, device=device)
-#     full_pose_sequence = original_loader.get_trainable_pose().to(device) # Shape: [Total_Frames, 129]
+    original_loader = utils.SeamlessSMPLHLoader(target_npz_file, device=device)
+    full_pose_sequence = original_loader.get_trainable_pose().to(device) # Shape: [Total_Frames, 129]
     
-#     chunk_frames = 64
-#     num_frames = full_pose_sequence.shape[0]
-#     num_chunks = num_frames // chunk_frames
-#     num_chunks = min([num_chunks, 5]) # DEBUG PURPOSES
-#     reconstructed_pose_list = []
-#     full_body_joint_count = 43
-#     batch_size = 1 # We do not batch here, so its just hard set to 1
+    chunk_frames = 64
+    num_frames = full_pose_sequence.shape[0]
+    num_chunks = num_frames // chunk_frames
+    num_chunks = min([num_chunks, 5]) # DEBUG PURPOSES
+    reconstructed_pose_list = []
+    full_body_joint_count = 43
+    batch_size = 1 # We do not batch here, so its just hard set to 1
     
-#     with torch.no_grad():
-#         model = _stage1_model_cache["full_body_model"]
-#         for i in range(num_chunks):
-#             start_frame = i * chunk_frames
-#             end_frame = (i + 1) * chunk_frames
-#             chunk_tensor = full_pose_sequence[start_frame:end_frame].unsqueeze(0) # Shape: [1, chunk_frames, 129]
+    with torch.no_grad():
+        model = _stage1_model_cache["full_body_model"]
+        for i in range(num_chunks):
+            start_frame = i * chunk_frames
+            end_frame = (i + 1) * chunk_frames
+            chunk_tensor = full_pose_sequence[start_frame:end_frame].unsqueeze(0) # Shape: [1, chunk_frames, 129]
             
-#             # Full body
-#             full_body_target_pose = chunk_tensor
-#             full_body_target_pose_matrix = rc.axis_angle_to_matrix(full_body_target_pose.reshape(batch_size, chunk_frames, full_body_joint_count, 3))
-#             full_body_target_pose_6d = rc.matrix_to_rotation_6d(full_body_target_pose_matrix).reshape(batch_size, chunk_frames, full_body_joint_count * 6)
-#             #Debug
-#             if _stage1_model_cache["normalize"]:        
-#                 # do a forward pass to the model
-#                 norm_mean = _stage1_model_cache["stats"]["mean"]
-#                 norm_std = _stage1_model_cache["stats"]["std"]
-#                 model_output = model((full_body_target_pose_6d - norm_mean) / (norm_std)) # Normalize
-#                 reconstructed_pose = (model_output["rec_pose"] * (norm_std)) + norm_mean # De-Normalize
-#             else:
-#                 model_output = model(full_body_target_pose_6d)
-#                 reconstructed_pose = full_body_target_pose_6d["rec_pose"]
-#             raw_output = reconstructed_pose.transpose(1, 2) # [batch, channels, frames]
-#             print(f"raw_output has a shape of {raw_output.shape}")
-#             reconstructed_full_body_pose_6d = raw_output.reshape(batch_size, chunk_frames, full_body_joint_count, 6) # [1, 64, 43, 6] [batch, frames, joints, points]
-#             print(f"reconstructed_full_body_pose_6d has a shape of {reconstructed_full_body_pose_6d.shape}")
-#             #
-#             # reconstructed_full_body_pose_6d = _stage1_model_cache["full_body_model"](full_body_target_pose_6d)["rec_pose"].reshape(batch_size, chunk_frames, full_body_joint_count, 6)
-#             reconstructed_full_body_pose_matrix = rc.rotation_6d_to_matrix(reconstructed_full_body_pose_6d)
-#             reconstructed_full_body_pose_axis_angles = rc.matrix_to_axis_angle(reconstructed_full_body_pose_matrix).reshape(batch_size * chunk_frames, -1)
+            # Full body
+            full_body_target_pose = chunk_tensor
+            full_body_target_pose_matrix = rc.axis_angle_to_matrix(full_body_target_pose.reshape(batch_size, chunk_frames, full_body_joint_count, 3))
+            full_body_target_pose_6d = rc.matrix_to_rotation_6d(full_body_target_pose_matrix).reshape(batch_size, chunk_frames, full_body_joint_count * 6)
+            #Debug
+            if _stage1_model_cache["normalize"]:        
+                # do a forward pass to the model
+                norm_mean = _stage1_model_cache["stats"]["mean"]
+                norm_std = _stage1_model_cache["stats"]["std"]
+                model_output = model((full_body_target_pose_6d - norm_mean) / (norm_std)) # Normalize
+                reconstructed_pose = (model_output["rec_pose"] * (norm_std)) + norm_mean # De-Normalize
+            else:
+                model_output = model(full_body_target_pose_6d)
+                reconstructed_pose = model_output["rec_pose"]
+            raw_output = reconstructed_pose.transpose(1, 2) # [batch, channels, frames]
+            print(f"raw_output has a shape of {raw_output.shape}")
+            reconstructed_full_body_pose_6d = raw_output.reshape(batch_size, chunk_frames, full_body_joint_count, 6) # [1, 64, 43, 6] [batch, frames, joints, points]
+            print(f"reconstructed_full_body_pose_6d has a shape of {reconstructed_full_body_pose_6d.shape}")
+            #
+            reconstructed_full_body_pose_matrix = rc.rotation_6d_to_matrix(reconstructed_full_body_pose_6d)
+            reconstructed_full_body_pose_axis_angles = rc.matrix_to_axis_angle(reconstructed_full_body_pose_matrix).reshape(batch_size * chunk_frames, -1)
 
-#             reconstructed_pose_list.append(reconstructed_full_body_pose_axis_angles.squeeze(0))
+            reconstructed_pose_list.append(reconstructed_full_body_pose_axis_angles.squeeze(0))
     
-#     if not reconstructed_pose_list:
-#         return None, "Status: Input sequence too short for chunk_frames chunks based on the given config."
+    if not reconstructed_pose_list:
+        return None, "Status: Input sequence too short for chunk_frames chunks based on the given config."
 
-#     final_reconstructed_pose = torch.cat(reconstructed_pose_list, dim=0) # [320, 129] [total frames, 129]
-#     print(f"final_reconstructed_pose has a shape of {final_reconstructed_pose.shape}")
-#     reconstructed_loader = utils.SeamlessSMPLHLoader(target_npz_file, device=device)
-#     reconstructed_loader.overwrite_with_reconstructed_pose(final_reconstructed_pose)
+    final_reconstructed_pose = torch.cat(reconstructed_pose_list, dim=0) # [320, 129] [total frames, 129]
+    print(f"final_reconstructed_pose has a shape of {final_reconstructed_pose.shape}")
+    reconstructed_loader = utils.SeamlessSMPLHLoader(target_npz_file, device=device)
+    reconstructed_loader.overwrite_with_reconstructed_pose(final_reconstructed_pose)
     
-#     output_video_path = utils.generate_reconstruction_comparison_video(original_loader, reconstructed_loader, progress=progress)
+    output_video_path = utils.generate_reconstruction_comparison_video(original_loader, reconstructed_loader, progress=progress)
     
-#     return output_video_path, "Status: Side-by-Side Reconstruction Complete."
+    return output_video_path, "Status: Side-by-Side Reconstruction Complete."
 
 def render_full_body_reconstruction_tab(device):
     with gr.TabItem("Stage 1: Reconstruction"):
