@@ -160,8 +160,8 @@ class SeamlessStage1Trainer:
             target_pose_6d = rc.matrix_to_rotation_6d(target_pose_matrix).reshape(batch_size, frames, joint_count * 6)
             if self.normalize:        
                 # do a forward pass to the model
-                model_output = self.model((target_pose_6d - self.norm_mean) / (self.norm_std + 1e-8))
-                reconstructed_pose = (model_output["rec_pose"] * self.norm_std) + self.norm_mean
+                model_output = self.model(target_pose_6d)
+                reconstructed_pose = (model_output["rec_pose"] * (self.norm_std)) + self.norm_mean # De-Normalize
             else:
                 model_output = self.model(target_pose_6d)
                 reconstructed_pose = model_output["rec_pose"]
