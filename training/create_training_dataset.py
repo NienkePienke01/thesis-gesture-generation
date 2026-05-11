@@ -95,7 +95,7 @@ def split_source(args):
         manifest["total_train_hours"] = train_hours
         manifest["total_val_hours"] = val_hours
 
-        with open(cache_dir / f"{args.output_name}" / "manifest.json", "w") as f:
+        with open(cache_dir_output / f"{args.output_name}" / "manifest.json", "w") as f:
             json.dump(manifest, f, indent=4)
         
         train_env.close()
@@ -125,7 +125,7 @@ def split_source(args):
             "mean": mean,
             "std": std
         }
-        save_path = cache_dir / f"{args.output_name}" / "mean_and_std.pt"
+        save_path = cache_dir_output / f"{args.output_name}" / "mean_and_std.pt"
         torch.save(stats, save_path)
         logger.info(f"Mean {mean} and STD {std} saved to {save_path}")
 
