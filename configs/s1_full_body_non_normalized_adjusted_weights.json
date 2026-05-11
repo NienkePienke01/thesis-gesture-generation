@@ -9,8 +9,8 @@
     "normalize": false,
 
     "data": {
-        "train_lmdb": "cache/training_data/training_data/training_data_filtered/training_data_filtered_train",
-        "val_lmdb": "cache/training_data/training_data/training_data_filtered/training_data_filtered_val"
+        "train_lmdb": "cache/training_data/training_data_filtered/training_data_filtered_train",
+        "val_lmdb": "cache/training_data/training_data_filtered/training_data_filtered_val"
     },
 
     "model_params": {
