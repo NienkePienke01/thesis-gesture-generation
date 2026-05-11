@@ -56,7 +56,6 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
     chunk_frames = 64
     num_frames = full_pose_sequence.shape[0]
     num_chunks = num_frames // chunk_frames
-    num_chunks = min([num_chunks, 5]) # DEBUG PURPOSES
     total_chunked_frames = num_chunks * chunk_frames
     reconstructed_pose_list = []
     full_body_joint_count = 43
@@ -92,7 +91,7 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
         return None, "Status: Input sequence too short for chunk_frames chunks based on the given .npz file."
 
     final_6d = torch.cat(all_chunks_6d, dim=2) # Concatenate all frames to each other [batch, channels, total_chunked_frames]
-    final_6d = torch.nn.functional.interpolate(final_6d, size=total_chunked_frames, mode='linear', align_corners=False) # Interpolate over the last dimension (time)
+    final_6d = torch.nn.functional.interpolate(final_6d, size=total_chunked_frames, mode='linear', align_corners=False) # Interpolate over the last dimension (time) Does nothing at the moment but left it in for now
     reconstructed_6d = final_6d.reshape(batch_size, total_chunked_frames, full_body_joint_count, 6) # [1, 320, 43, 6]
     # Convert to axis angle for smpl
     reconstructed_matrix = rc.rotation_6d_to_matrix(reconstructed_6d)
