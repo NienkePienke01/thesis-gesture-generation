@@ -421,7 +421,7 @@ def main():
     log_path.parent.mkdir(parents=True, exist_ok=True)
     logger.add(str(log_path), level="INFO")
 
-    num_workers = cli_args.workers if cli_args.workers else max(1, os.cpu_count() // 1)
+    num_workers = cli_args.workers if cli_args.workers else 4
     logger.info(f"Initializing segmentation with {num_workers} workers on GPU {cli_args.gpu_id}")
 
     config_path = PROJECT_ROOT / cli_args.config 
