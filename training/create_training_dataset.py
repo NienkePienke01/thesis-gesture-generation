@@ -10,6 +10,7 @@ import torch
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 cache_dir = PROJECT_ROOT / "cache" / "segmenter"
+cache_dir_output = PROJECT_ROOT / "cache" / "training_data"
 
 def split_source(args):
     sources = []
@@ -22,8 +23,8 @@ def split_source(args):
             "path": cache_dir / name
         })
 
-    output_train = cache_dir / f"{args.output_name}" / f"{args.output_name}_train"
-    output_val = cache_dir / f"{args.output_name}" / f"{args.output_name}_val"
+    output_train = cache_dir_output / f"{args.output_name}" / f"{args.output_name}_train"
+    output_val = cache_dir_output / f"{args.output_name}" / f"{args.output_name}_val"
     output_train.mkdir(parents=True, exist_ok=True)
     output_val.mkdir(parents=True, exist_ok=True)
 
