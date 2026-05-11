@@ -21,12 +21,13 @@ cache_dir = PROJECT_ROOT / "cache" / "segmenter"
 class SeamlessSegmenter:
     def __init__(self, dataset : SeamlessDataset, pose_fps=30, audio_sr=16000, pose_length=64, stride=10, seed=42, max_gb=10,
                  clean_first_seconds=0, clean_final_seconds=0, segment_mode='both', 
-                 filter_out_of_screen_hands=False, keep_only_high_intensity_blocks=False, vad_padding_in_seconds=0, worker_id=-1):
+                 filter_out_of_screen_hands=False, keep_only_high_intensity_blocks=False, vad_padding_in_seconds=0, worker_id=-1,
+                 project_name="unknown"):
         self.dataset = dataset
         if worker_id == -1:
-            self.output_path = cache_dir / f"{self.dataset.name}"
+            self.output_path = cache_dir / project_name / f"{self.dataset.name}"
         else:
-            self.output_path = cache_dir / f"{self.dataset.name}" / f"part_{worker_id}"
+            self.output_path = cache_dir / project_name / f"{self.dataset.name}" / f"part_{worker_id}"
         self.pose_fps = pose_fps
         self.audio_sr = audio_sr
         self.pose_length = pose_length
@@ -285,9 +286,20 @@ class SeamlessSegmenter:
         # initialise for 0.0 silence
         sem_scores = np.zeros(loader.num_frames, dtype=np.float32)
         if vad_info != None:
+            movement = loader.meta_data.movement_intensity
+            threshold = loader.meta_data.movement_intensity_peak_threshold
             for vad_segment in vad_info:
                 start_frame = int(vad_segment['start'] * self.pose_fps)
                 end_frame = int(vad_segment['end'] * self.pose_fps)
+                
+                if self.keep_only_high_intensity_blocks and movement is not None:
+                    index_start = max(0, start_frame)
+                    index_end = min(len(movement), end_frame)
+                    
+                    # Check for a local peak within this entire VAD block
+                    block_max = np.max(movement[index_start:index_end]) if index_start < index_end else 0
+                    if block_max <= threshold:
+                        continue
 
                 # Mark the entire padded vad sequence as 0.05 (padded)
                 if self.vad_padding_in_frames > 0.0:
@@ -298,8 +310,7 @@ class SeamlessSegmenter:
                 sem_scores[max(0, start_frame):min(loader.num_frames, end_frame)] = 0.1
         
         # improve 0.1 to 0.2 if movement is in the top 25% (more movement during speech)
-        if loader.meta_data.movement_intensity is not None:
-            threshold = loader.meta_data.movement_intensity_peak_threshold
+        if movement is not None:
             # We only upgrade frames that are already part of a VAD segment
             peak_mask = (loader.meta_data.movement_intensity > threshold) & (sem_scores == 0.1)
             sem_scores[peak_mask] = 0.2
@@ -440,7 +451,7 @@ def main():
 
     merge_parts(dataset.name, config_data)
 
-    output_path = PROJECT_ROOT / "cache" / "segmenter" / dataset.name
+    output_path = PROJECT_ROOT / "cache" / "segmenter" / config_data.get("project_name", "unknown") / dataset.name
     env = lmdb.open(str(output_path), readonly=True)
     with env.begin() as transaction:
         stats = env.stat()
