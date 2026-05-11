@@ -360,8 +360,7 @@ def run_worker(worker_id, file_ids, config_data, dataset_path, gpu_id):
         else:
             logger.error(f"Worker {worker_id} | Verification Failed: Database is empty/not found!")
 
-def merge_parts(dataset_name, config_data):
-    merged_path = PROJECT_ROOT / "cache" / "segmenter" / dataset_name
+def merge_parts(merged_path, dataset_name, config_data):
     
     # Prevent overwriting an existing merged dataset
     if merged_path.exists() and any(merged_path.glob("*.lmdb")):
@@ -449,9 +448,9 @@ def main():
 
     logger.info("All workers completed. Will now merge the LMDB folders in the cache directory.")
 
-    merge_parts(dataset.name, config_data)
-
     output_path = PROJECT_ROOT / "cache" / "segmenter" / config_data.get("project_name", "unknown") / dataset.name
+    merge_parts(output_path, dataset.name, config_data)
+
     env = lmdb.open(str(output_path), readonly=True)
     with env.begin() as transaction:
         stats = env.stat()
