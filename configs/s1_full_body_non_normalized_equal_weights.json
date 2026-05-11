@@ -1,8 +1,8 @@
 {
-    "project": "s1_fullbody_not_normalized_adjusted_weights",
+    "project": "s1_fullbody_not_normalized_equal_weights",
     "mode": "full",
     "device": "cuda",
-    "gpus": [0, 1, 2, 3],
+    "gpus": [1, 2, 3],
     "vae_test_dim": 258,
     "periodic_backup_after_x_epochs": 50,
     "log_period": 10,
@@ -27,9 +27,9 @@
 
     "training_params": {
         "batch_size": 64,
-        "epochs": 800,
-        "lr_base": 0.0001,
-        "decay_epochs": 750,
+        "epochs": 1000,
+        "lr_base": 0.0003,
+        "decay_epochs": 9999,
         "grad_norm": 1.0
     },
 
