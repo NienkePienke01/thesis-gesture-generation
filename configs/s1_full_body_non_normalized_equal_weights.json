@@ -1,5 +1,5 @@
 {
-    "project": "s1_fullbody_not_normalized_equal_weights",
+    "project": "s1_fullbody_after_bug_fix",
     "mode": "full",
     "device": "cuda",
     "gpus": [0, 1, 2, 3],

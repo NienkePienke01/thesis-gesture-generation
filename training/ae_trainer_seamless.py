@@ -82,6 +82,7 @@ class SeamlessStage1Trainer:
         reconstructed_pose_6d = reconstructed_pose.transpose(1, 2).reshape(batch_size, frames, joint_count, 6) # Transpose is important here to get the right Batch, frames, channel
         
         # convert back to matrix form for the loss calculations
+        target_pose_matrix = rc.rotation_6d_to_matrix(target_pose_6d.reshape(batch_size, frames, joint_count, 6))
         reconstructed_pose_matrix = rc.rotation_6d_to_matrix(reconstructed_pose_6d)
         
         # compute the geodesic loss which compares rotation matrices directly
@@ -109,7 +110,8 @@ class SeamlessStage1Trainer:
 
             vertices_vel_loss = self.vel_loss(predicted_verts[:, 1:] - predicted_verts[:, :-1], target_verts[:, 1:] - target_verts[:, :-1])
             vertices_acc_loss = self.vel_loss(predicted_verts[:, 2:] + predicted_verts[:, :-2] - 2 * predicted_verts[:, 1:-1], target_verts[:, 2:] + target_verts[:, :-2] - 2 * target_verts[:, 1:-1])
-            loss_ver += (vertices_vel_loss + vertices_acc_loss) * self.args.loss_weights.ver_weight
+            combined_vertices_loss = (vertices_vel_loss + vertices_acc_loss) * self.args.loss_weights.ver_weight
+            loss_ver += combined_vertices_loss
             
         # commitment loss
         loss_commit = model_output["embedding_loss"]
@@ -167,6 +169,8 @@ class SeamlessStage1Trainer:
                 reconstructed_pose = model_output["rec_pose"]
         
             reconstructed_pose_6d = reconstructed_pose.transpose(1, 2).reshape(batch_size, frames, joint_count, 6) # Transpose is important here to get the right Batch, frames, channel
+            
+            target_pose_matrix = rc.rotation_6d_to_matrix(target_pose_6d.reshape(batch_size, frames, joint_count, 6))
             reconstructed_pose_matrix = rc.rotation_6d_to_matrix(reconstructed_pose_6d)
             
             # reconstruction loss
@@ -189,7 +193,8 @@ class SeamlessStage1Trainer:
 
                 vertices_vel_loss = self.vel_loss(predicted_verts[:, 1:] - predicted_verts[:, :-1], target_verts[:, 1:] - target_verts[:, :-1])
                 vertices_acc_loss = self.vel_loss(predicted_verts[:, 2:] + predicted_verts[:, :-2] - 2 * predicted_verts[:, 1:-1], target_verts[:, 2:] + target_verts[:, :-2] - 2 * target_verts[:, 1:-1])
-                loss_ver += (vertices_vel_loss + vertices_acc_loss) * self.args.loss_weights.ver_weight
+                combined_vertices_loss = (vertices_vel_loss + vertices_acc_loss) * self.args.loss_weights.ver_weight
+                loss_ver += combined_vertices_loss
 
             loss_commit = model_output["embedding_loss"]
             total_loss = loss_rec + loss_commit + loss_ver
