@@ -14,6 +14,7 @@ from utils import rotation_conversions as rc
 from models.rvq import RVQVAE
 import data_processing.utils as utils
 os.environ['PYOPENGL_PLATFORM'] = 'egl'
+import math
 
 _stage1_model_cache = {
     "full_body_model": None,
@@ -46,6 +47,62 @@ def load_model_from_files(full_config, full_body_checkpoint, device):
     except Exception as e:
         return f"Status: Error loading model - {str(e)}"
 
+# def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
+#     if _stage1_model_cache["full_body_model"] is None:
+#         return None, "Status: Please load the model first."
+
+#     original_loader = utils.SeamlessSMPLHLoader(target_npz_file, device=device)
+#     full_pose_sequence = original_loader.get_trainable_pose().to(device) # Shape: [Total_Frames, 129]
+    
+#     chunk_frames = 64
+#     num_frames = full_pose_sequence.shape[0]
+#     num_chunks = num_frames // chunk_frames
+#     reconstructed_pose_list = []
+#     full_body_joint_count = 43
+#     batch_size = 1 # We do not batch here, so its just hard set to 1
+    
+#     with torch.no_grad():
+#         model = _stage1_model_cache["full_body_model"]
+#         if _stage1_model_cache["normalize"]:  
+#             norm_mean = _stage1_model_cache["stats"]["mean"]
+#             norm_std = _stage1_model_cache["stats"]["std"]
+#         #
+#         for i in range(num_chunks):
+#             start_frame = i * chunk_frames
+#             end_frame = (i + 1) * chunk_frames
+#             chunk_tensor = full_pose_sequence[start_frame:end_frame].unsqueeze(0) # Shape: [1, chunk_frames, 129]
+            
+#             # Full body
+#             full_body_target_pose = chunk_tensor
+#             full_body_target_pose_matrix = rc.axis_angle_to_matrix(full_body_target_pose.reshape(batch_size, chunk_frames, full_body_joint_count, 3))
+#             full_body_target_pose_6d = rc.matrix_to_rotation_6d(full_body_target_pose_matrix).reshape(batch_size, chunk_frames, full_body_joint_count * 6)
+#             #Debug
+#             if _stage1_model_cache["normalize"]:        
+#                 # do a forward pass to the model
+#                 model_output = model((full_body_target_pose_6d - norm_mean) / (norm_std)) # Normalize
+#                 reconstructed_pose = (model_output["rec_pose"] * (norm_std)) + norm_mean # De-Normalize
+#             else:
+#                 model_output = model(full_body_target_pose_6d)
+#                 reconstructed_pose = model_output["rec_pose"]
+#             raw_output = reconstructed_pose.transpose(1, 2) # [batch, channels, frames]
+#             reconstructed_full_body_pose_6d = raw_output.reshape(batch_size, chunk_frames, full_body_joint_count, 6) # [1, 64, 43, 6] [batch, frames, joints, points]
+#             #
+#             reconstructed_full_body_pose_matrix = rc.rotation_6d_to_matrix(reconstructed_full_body_pose_6d)
+#             reconstructed_full_body_pose_axis_angles = rc.matrix_to_axis_angle(reconstructed_full_body_pose_matrix).reshape(batch_size * chunk_frames, -1)
+
+#             reconstructed_pose_list.append(reconstructed_full_body_pose_axis_angles.squeeze(0))
+    
+#     if not reconstructed_pose_list:
+#         return None, "Status: Input sequence too short for chunk_frames chunks based on the given config."
+
+#     final_reconstructed_pose = torch.cat(reconstructed_pose_list, dim=0) # [320, 129] [total frames, 129]
+#     reconstructed_loader = utils.SeamlessSMPLHLoader(target_npz_file, device=device)
+#     reconstructed_loader.overwrite_with_reconstructed_pose(final_reconstructed_pose)
+    
+#     output_video_path = utils.generate_reconstruction_comparison_video(original_loader, reconstructed_loader, progress=progress)
+    
+#     return output_video_path, "Status: Side-by-Side Reconstruction Complete."
+
 def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
     if _stage1_model_cache["full_body_model"] is None:
         return None, "Status: Please load the model first."
@@ -54,21 +111,18 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
     full_pose_sequence = original_loader.get_trainable_pose().to(device) # Shape: [Total_Frames, 129]
     
     chunk_frames = 64
+    stride = 20
     num_frames = full_pose_sequence.shape[0]
-    num_chunks = num_frames // chunk_frames
-    reconstructed_pose_list = []
+    num_chunks = math.floor(num_frames / stride) + 1
     full_body_joint_count = 43
     batch_size = 1 # We do not batch here, so its just hard set to 1
+    all_chunks_6d = []
     
     with torch.no_grad():
         model = _stage1_model_cache["full_body_model"]
-        if _stage1_model_cache["normalize"]:  
-            norm_mean = _stage1_model_cache["stats"]["mean"]
-            norm_std = _stage1_model_cache["stats"]["std"]
-        #
         for i in range(num_chunks):
-            start_frame = i * chunk_frames
-            end_frame = (i + 1) * chunk_frames
+            start_frame = i * stride
+            end_frame = start_frame + chunk_frames
             chunk_tensor = full_pose_sequence[start_frame:end_frame].unsqueeze(0) # Shape: [1, chunk_frames, 129]
             
             # Full body
@@ -78,23 +132,27 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
             #Debug
             if _stage1_model_cache["normalize"]:        
                 # do a forward pass to the model
+                norm_mean = _stage1_model_cache["stats"]["mean"]
+                norm_std = _stage1_model_cache["stats"]["std"]
                 model_output = model((full_body_target_pose_6d - norm_mean) / (norm_std)) # Normalize
                 reconstructed_pose = (model_output["rec_pose"] * (norm_std)) + norm_mean # De-Normalize
             else:
                 model_output = model(full_body_target_pose_6d)
                 reconstructed_pose = model_output["rec_pose"]
-            raw_output = reconstructed_pose.transpose(1, 2) # [batch, channels, frames]
-            reconstructed_full_body_pose_6d = raw_output.reshape(batch_size, chunk_frames, full_body_joint_count, 6) # [1, 64, 43, 6] [batch, frames, joints, points]
-            #
-            reconstructed_full_body_pose_matrix = rc.rotation_6d_to_matrix(reconstructed_full_body_pose_6d)
-            reconstructed_full_body_pose_axis_angles = rc.matrix_to_axis_angle(reconstructed_full_body_pose_matrix).reshape(batch_size * chunk_frames, -1)
 
-            reconstructed_pose_list.append(reconstructed_full_body_pose_axis_angles.squeeze(0))
+            raw_output = reconstructed_pose.transpose(1, 2) # [batch, channels, chunk_frames]
+            all_chunks_6d.append(raw_output)
     
-    if not reconstructed_pose_list:
-        return None, "Status: Input sequence too short for chunk_frames chunks based on the given config."
+    if not all_chunks_6d:
+        return None, "Status: Input sequence too short for chunk_frames chunks based on the given .npz file."
 
-    final_reconstructed_pose = torch.cat(reconstructed_pose_list, dim=0) # [320, 129] [total frames, 129]
+    final_6d = torch.cat(all_chunks_6d, dim=2) # Concatenate all frames to each other [batch, channels, total_chunked_frames]
+    final_6d = torch.nn.functional.interpolate(final_6d, size=num_frames, mode='linear', align_corners=False) # Interpolate over the last dimension (time) Does nothing at the moment but left it in for now
+    reconstructed_6d = final_6d.reshape(batch_size, num_frames, full_body_joint_count, 6) # [1, 320, 43, 6]
+    # Convert to axis angle for smpl
+    reconstructed_matrix = rc.rotation_6d_to_matrix(reconstructed_6d)
+    final_reconstructed_pose = rc.matrix_to_axis_angle(reconstructed_matrix).reshape(batch_size * num_frames, -1) # [channels, frames]
+
     reconstructed_loader = utils.SeamlessSMPLHLoader(target_npz_file, device=device)
     reconstructed_loader.overwrite_with_reconstructed_pose(final_reconstructed_pose)
     
