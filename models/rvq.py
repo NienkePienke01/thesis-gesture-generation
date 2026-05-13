@@ -654,24 +654,45 @@ class RVQVAE(nn.Module):
         self.num_code = nb_code
 
         # self.quant = args.quantizer
-        self.encoder = Encoder_Custom(input_width,
-                               output_emb_width,
-                               down_t,
-                               stride_t,
-                               width,
-                               depth,
-                               dilation_growth_rate,
-                               activation=activation,
-                               norm=norm)
-        self.decoder = Decoder_Custom(input_width,
-                               output_emb_width,
-                               down_t,
-                               stride_t,
-                               width,
-                               depth,
-                               dilation_growth_rate,
-                               activation=activation,
-                               norm=norm)
+        if activation == 'leaky_relu':
+            self.encoder = Encoder_Custom(input_width,
+                                output_emb_width,
+                                down_t,
+                                stride_t,
+                                width,
+                                depth,
+                                dilation_growth_rate,
+                                activation=activation,
+                                norm=norm)
+            self.decoder = Decoder_Custom(input_width,
+                                output_emb_width,
+                                down_t,
+                                stride_t,
+                                width,
+                                depth,
+                                dilation_growth_rate,
+                                activation=activation,
+                                norm=norm)
+
+        else:
+            self.encoder = Encoder(input_width,
+                                output_emb_width,
+                                down_t,
+                                stride_t,
+                                width,
+                                depth,
+                                dilation_growth_rate,
+                                activation=activation,
+                                norm=norm)
+            self.decoder = Decoder(input_width,
+                                output_emb_width,
+                                down_t,
+                                stride_t,
+                                width,
+                                depth,
+                                dilation_growth_rate,
+                                activation=activation,
+                                norm=norm)
         # self.encoder = tDEncoder(6, output_emb_width, down_t, down_t, stride_t,  stride_t, width, depth,
         #    dilation_growth_rate, activation=activation, norm=norm)
 
@@ -679,8 +700,9 @@ class RVQVAE(nn.Module):
         #    dilation_growth_rate, activation=activation, norm=norm)
         # self.decoder = Causal_Decoder(input_width, output_emb_width, down_t, stride_t, width, depth,
         #                        dilation_growth_rate, activation=activation, norm=norm)
+        num_quantizers = 4 if activation == 'leaky_relu' else 6
         rvqvae_config = {
-            'num_quantizers': 4, # Used to be 6 for semtalk altered to 4 to match dyadit
+            'num_quantizers': num_quantizers, # Used to be 6 for semtalk altered to 4 to match dyadit
             'shared_codebook': False,
             'quantize_dropout_prob': 0.2,
             'quantize_dropout_cutoff_index': 0,
