@@ -44,7 +44,7 @@ def train_model(rank, gpu_amount_size, shared_port, args):
         local_checkpoint_dir.mkdir(parents=True)
 
     if rank == 0:
-        wandb.init(project=args.project, name=f"{args.project}_{args.mode}_ddp_run", config=vars(args))
+        wandb.init(project="Seamless_Training", name=f"{args.project}_{args.mode}_ddp_run_{start_time}", config=vars(args))
     
     actual_gpu_id = args.gpus[rank]
     
