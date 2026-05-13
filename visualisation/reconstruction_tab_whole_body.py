@@ -121,9 +121,13 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
     num_chunks = math.floor((num_frames - chunk_frames) / stride) + 1
     full_body_joint_count = 43
     batch_size = 1 # We do not batch here, so its just hard set to 1
-    # all_chunks_6d = []
-    final_6d_acc = torch.zeros((batch_size, num_frames, full_body_joint_count * 6), device=device)
-    weight_mask = torch.zeros((batch_size, num_frames, 1), device=device)
+    all_chunks_6d = []
+    #
+    valid_frames = (num_chunks - 1) * stride + chunk_frames
+    latent_last = None
+    pre_frames = chunk_frames - stride
+    final_reconstructed_6d = torch.zeros((batch_size, valid_frames, full_body_joint_count, 6), device=device)
+    
     
     with torch.no_grad():
         model = _stage1_model_cache["full_body_model"]
@@ -136,7 +140,11 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
             full_body_target_pose = chunk_tensor
             full_body_target_pose_matrix = rc.axis_angle_to_matrix(full_body_target_pose.reshape(batch_size, chunk_frames, full_body_joint_count, 3))
             full_body_target_pose_6d = rc.matrix_to_rotation_6d(full_body_target_pose_matrix).reshape(batch_size, chunk_frames, full_body_joint_count * 6)
-            #Debug
+            
+            if i > 0 and latent_last is not None:
+                # Seed the start of the current input with the end of the previous output
+                full_body_target_pose_6d[:, :pre_frames, :] = latent_last[:, -pre_frames:, :]
+
             if _stage1_model_cache["normalize"]:        
                 # do a forward pass to the model
                 norm_mean = _stage1_model_cache["stats"]["mean"]
@@ -147,28 +155,27 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
                 model_output = model(full_body_target_pose_6d)
                 reconstructed_pose = model_output["rec_pose"]
 
-            raw_output = reconstructed_pose.transpose(1, 2) # [batch, channels, chunk_frames]
-            buffer_end = min(end_frame, num_frames)
-            chunk_slice_end = buffer_end - start_frame
-            final_6d_acc[:, start_frame:buffer_end, :] += raw_output[:, :chunk_slice_end, :]
-            weight_mask[:, start_frame:buffer_end, :] += 1.0
+            # raw_output = reconstructed_pose.transpose(1, 2) # [batch, channels, chunk_frames]
             # all_chunks_6d.append(raw_output)
-    
-    # if not all_chunks_6d:
-    #     return None, "Status: Input sequence too short for chunk_frames chunks based on the given .npz file."
+            #
+            reconstructed_full_body_pose_6d = reconstructed_pose.transpose(1, 2).reshape(batch_size, chunk_frames, full_body_joint_count, 6)
+            reconstructed_full_body_pose_matrix = rc.rotation_6d_to_matrix(reconstructed_full_body_pose_6d)
+            reconstructed_full_body_pose_6d = rc.matrix_to_rotation_6d(reconstructed_full_body_pose_matrix)
+            # Store for next iteration's history
+            latent_last = reconstructed_full_body_pose_6d.reshape(batch_size, chunk_frames, -1)
 
-    # final_6d = torch.cat(all_chunks_6d, dim=2) # Concatenate all frames to each other [batch, channels, total_chunked_frames]
-    print(f"The shape of final_6d before interpolation: {final_6d.shape}")
-    final_6d = final_6d_acc / (weight_mask + 1e-8)
-    # final_6d = final_6d[:,:,:num_frames] # Skip interpolation and just show the first num_frames
-    # final_6d = torch.nn.functional.interpolate(final_6d, size=num_frames, mode='linear', align_corners=False) # Interpolate over the last dimension (time) Does nothing at the moment but left it in for now
-    print(f"The shape of final_6d after interpolation: {final_6d.shape}")
-    reconstructed_6d = final_6d.reshape(batch_size, num_frames, full_body_joint_count, 6) # [1, 320, 43, 6]
-    print(f"The shape of final_6d after the reshape: {reconstructed_6d.shape}")
-    # Convert to axis angle for smpl
+            # Placement into the final buffer
+            if i == 0:
+                final_reconstructed_6d[:, start_frame:end_frame] = reconstructed_full_body_pose_6d
+            else:
+                # Only write the new frames
+                new_start = start_frame + pre_frames
+                final_reconstructed_6d[:, new_start:end_frame] = reconstructed_full_body_pose_6d[:, pre_frames:]
+    
+    reconstructed_6d = final_reconstructed_6d # [1, num_frames, 43, 6]
     reconstructed_matrix = rc.rotation_6d_to_matrix(reconstructed_6d)
-    final_reconstructed_pose = rc.matrix_to_axis_angle(reconstructed_matrix).reshape(batch_size * num_frames, -1) # [frames, channels]
-    print(f"The shape of final_reconstructed_pose: {final_reconstructed_pose.shape}")
+    final_reconstructed_pose = rc.matrix_to_axis_angle(reconstructed_matrix).reshape(batch_size * valid_frames, -1) # [frames, channels]
+
     reconstructed_loader = utils.SeamlessSMPLHLoader(target_npz_file, device=device)
     reconstructed_loader.overwrite_with_reconstructed_pose(final_reconstructed_pose)
     
