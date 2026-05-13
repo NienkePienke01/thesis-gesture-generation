@@ -113,12 +113,10 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
     chunk_frames = 64
     stride = 20
     num_frames = full_pose_sequence.shape[0]
-    num_chunks = math.floor(num_frames / stride) + 1
+    num_chunks = math.floor((num_frames - chunk_frames) / stride) + 1
     full_body_joint_count = 43
     batch_size = 1 # We do not batch here, so its just hard set to 1
     all_chunks_6d = []
-
-    print(f"{(num_chunks*chunk_frames) - (stride * chunk_frames)} should be equal or less than {num_frames}")
     
     with torch.no_grad():
         model = _stage1_model_cache["full_body_model"]
@@ -126,7 +124,6 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
             start_frame = i * stride
             end_frame = start_frame + chunk_frames
             chunk_tensor = full_pose_sequence[start_frame:end_frame].unsqueeze(0) # Shape: [1, chunk_frames, 129]
-            print(f"Total size of chunk for iteration {i} is equal to {end_frame - start_frame}")
             
             # Full body
             full_body_target_pose = chunk_tensor
