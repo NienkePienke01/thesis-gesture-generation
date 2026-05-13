@@ -151,11 +151,11 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
     final_6d = torch.nn.functional.interpolate(final_6d, size=num_frames, mode='linear', align_corners=False) # Interpolate over the last dimension (time) Does nothing at the moment but left it in for now
     print(f"The shape of final_6d after interpolation: {final_6d.shape}")
     reconstructed_6d = final_6d.reshape(batch_size, num_frames, full_body_joint_count, 6) # [1, 320, 43, 6]
-    print(f"The shape of final_6d after the reshape: {final_6d.shape}")
+    print(f"The shape of final_6d after the reshape: {reconstructed_6d.shape}")
     # Convert to axis angle for smpl
     reconstructed_matrix = rc.rotation_6d_to_matrix(reconstructed_6d)
     final_reconstructed_pose = rc.matrix_to_axis_angle(reconstructed_matrix).reshape(batch_size * num_frames, -1) # [channels, frames]
-    print(f"The shape of final_reconstructed_pose: {final_6d.shape}")
+    print(f"The shape of final_reconstructed_pose: {final_reconstructed_pose.shape}")
     reconstructed_loader = utils.SeamlessSMPLHLoader(target_npz_file, device=device)
     reconstructed_loader.overwrite_with_reconstructed_pose(final_reconstructed_pose)
     
