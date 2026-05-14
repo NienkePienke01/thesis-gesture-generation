@@ -1,5 +1,5 @@
 {
-    "project": "s1_fullbody_equal_weights_mse",
+    "project": "s1_fullbody_equal_mse",
     "mode": "full",
     "device": "cuda",
     "gpus": [0, 1, 2, 3],
