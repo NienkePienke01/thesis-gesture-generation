@@ -89,8 +89,8 @@ class SeamlessStage1Trainer:
         # compute the geodesic loss which compares rotation matrices directly
         # Use the 6D tensors directly for MSE
         target_pose_6d_reshaped = target_pose_6d.reshape(batch_size, frames, joint_count, 6) # Reshape to match reconstructed_pose_6d
-        loss_rec = self.rec_loss(reconstructed_pose_6d, target_pose_6d_reshaped) * self.args.loss_weights.rec_weight
-        # loss_rec = self.rec_loss(reconstructed_pose_matrix, target_pose_matrix) * self.args.loss_weights.rec_weight
+        # loss_rec = self.rec_loss(reconstructed_pose_6d, target_pose_6d_reshaped) * self.args.loss_weights.rec_weight
+        loss_rec = self.rec_loss(reconstructed_pose_matrix, target_pose_matrix) * self.args.loss_weights.rec_weight
 
         # compute the temporal loss which is the L1 loss that checks the difference between consecutive frames
         loss_vel = self.vel_loss(reconstructed_pose_matrix[:, 1:] - reconstructed_pose_matrix[:, :-1], target_pose_matrix[:, 1:] - target_pose_matrix[:, :-1])
@@ -179,8 +179,8 @@ class SeamlessStage1Trainer:
             
             # reconstruction loss
             target_pose_6d_reshaped = target_pose_6d.reshape(batch_size, frames, joint_count, 6) # Reshape to match reconstructed_pose_6d
-            loss_rec = self.rec_loss(reconstructed_pose_6d, target_pose_6d_reshaped) * self.args.loss_weights.rec_weight
-            # loss_rec = self.rec_loss(reconstructed_pose_matrix, target_pose_matrix) * self.args.loss_weights.rec_weight
+            # loss_rec = self.rec_loss(reconstructed_pose_6d, target_pose_6d_reshaped) * self.args.loss_weights.rec_weight
+            loss_rec = self.rec_loss(reconstructed_pose_matrix, target_pose_matrix) * self.args.loss_weights.rec_weight
             
             # 4. vertex los
             loss_ver = 0
