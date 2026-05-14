@@ -182,7 +182,7 @@ class SeamlessStage1Trainer:
             # loss_rec = self.rec_loss(reconstructed_pose_6d, target_pose_6d_reshaped) * self.args.loss_weights.rec_weight
             loss_rec = self.rec_loss(reconstructed_pose_matrix, target_pose_matrix) * self.args.loss_weights.rec_weight
             
-            # 4. vertex los
+            # vertex loss
             loss_ver = 0
             if self.args.loss_weights.ver_weight > 0:
                 # convert predicted and target matrices to axis angle for prepare_smpl_input
