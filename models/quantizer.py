@@ -186,11 +186,6 @@ class QuantizeEMAReset(nn.Module):
         self.nb_code = nb_code
         self.code_dim = code_dim
         self.mu = mu
-        print("LOOK!")
-        print("LOOK!")
-        print(f"MU HAS A VALUE OF: {self.mu}")
-        print("LOOK!")
-        print("LOOK!")
         self.reset_codebook()
 
     def reset_codebook(self):
