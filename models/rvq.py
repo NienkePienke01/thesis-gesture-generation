@@ -643,6 +643,7 @@ class RVQVAE(nn.Module):
                  depth=3,
                  dilation_growth_rate=3,
                  activation='relu',
+                 mu=0.99,
                  norm=None):
 
         super().__init__()
@@ -652,6 +653,7 @@ class RVQVAE(nn.Module):
         # exit()
         self.code_dim = code_dim
         self.num_code = nb_code
+        self.mu = mu
 
         # self.quant = args.quantizer
         if activation == 'leaky_relu':
@@ -708,6 +710,7 @@ class RVQVAE(nn.Module):
             'quantize_dropout_cutoff_index': 0,
             'nb_code': nb_code,
             'code_dim': code_dim,
+            'mu': mu, 
             'args': args,
         }
         self.quantizer = ResidualVQ(**rvqvae_config)

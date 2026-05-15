@@ -15,8 +15,8 @@
 
     "model_params": {
         "nb_code": 256,
-        "code_dim": 78,
-        "output_emb_width": 78,
+        "code_dim": 258,
+        "output_emb_width": 258,
         "down_t": 2,
         "stride_t": 2,
         "width": 512,

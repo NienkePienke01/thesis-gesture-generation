@@ -1,5 +1,5 @@
 {
-    "project": "s1_full_body_geosedic_256_contiual_data",
+    "project": "s1_full_body_geosedic_256",
     "mode": "full",
     "device": "cuda",
     "gpus": [0, 1, 2, 3],

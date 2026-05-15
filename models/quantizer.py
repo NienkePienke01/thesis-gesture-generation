@@ -181,11 +181,11 @@ class EMAVectorQuantizer(nn.Module):
 #         self.proj = nn.Linear(num_hiddens, n_embed)
 #         self.embed = nn.Embedding(n_embed, embedding_dim)
 class QuantizeEMAReset(nn.Module):
-    def __init__(self, nb_code, code_dim, args):
+    def __init__(self, nb_code, code_dim, args=None, mu=0.99):
         super(QuantizeEMAReset, self).__init__()
         self.nb_code = nb_code
         self.code_dim = code_dim
-        self.mu = 0.99  ##TO_DO
+        self.mu = mu
         self.reset_codebook()
 
     def reset_codebook(self):
@@ -261,7 +261,7 @@ class QuantizeEMAReset(nn.Module):
         self.code_count = self.mu * self.code_count + (1. - self.mu) * code_count
 
         usage = (self.code_count.view(self.nb_code, 1) >= 1.0).float()
-        code_update = self.code_sum.view(self.nb_code, self.code_dim) / self.code_count.view(self.nb_code, 1)
+        code_update = self.code_sum.view(self.nb_code, self.code_dim) / (self.code_count.view(self.nb_code, 1) + 1e-5)
         self.codebook = usage * code_update + (1-usage) * code_rand
 
 
