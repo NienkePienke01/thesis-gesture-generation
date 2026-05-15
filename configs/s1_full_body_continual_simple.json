@@ -1,0 +1,45 @@
+{
+    "project": "s1_full_body_continual_simple",
+    "mode": "full",
+    "device": "cuda",
+    "gpus": [0, 1, 2, 3],
+    "vae_test_dim": 258,
+    "periodic_backup_after_x_epochs": 50,
+    "log_period": 10,
+    "normalize": false,
+
+    "data": {
+        "train_lmdb": "cache/training_data/filtered_continual/filtered_continual_train",
+        "val_lmdb": "cache/training_data/filtered_continual/filtered_continual_val"
+    },
+
+    "model_params": {
+        "nb_code": 512,
+        "code_dim": 64,
+        "output_emb_width": 64,
+        "down_t": 2,
+        "stride_t": 2,
+        "width": 512,
+        "depth": 6,
+        "dilation_growth_rate": 3,
+        "activation": "leaky_relu",
+        "mu": 0.9
+    },
+
+    "training_params": {
+        "batch_size": 64,
+        "epochs": 800,
+        "lr_base": 0.0003,
+        "decay_epochs": 9999,
+        "grad_norm": 1.0,
+        "rec_mse": false
+    },
+
+    "loss_weights": {
+        "rec_weight": 1,
+        "ver_weight": 1,
+        "vel_weight": 1,
+        "acc_weight": 1,
+        "commit_weight": 0.05
+    }
+}
