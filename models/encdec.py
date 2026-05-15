@@ -529,44 +529,6 @@ class Encoder(nn.Module):
     def forward(self, x):
         return self.model(x)
 
-class Encoder_Custom(nn.Module):
-    def __init__(self,
-                 input_emb_width=3,
-                 output_emb_width=512,
-                 down_t=2,
-                 stride_t=2,
-                 width=512,
-                 depth=3,
-                 dilation_growth_rate=3,
-                 activation='leaky_relu',
-                 norm=None):
-        super().__init__()
-
-        blocks = []
-        filter_t, pad_t = stride_t * 2, stride_t // 2
-        
-        blocks.append(nn.Conv1d(input_emb_width, width, 3, 1, 1))
-        blocks.append(nn.LeakyReLU(0.2)) # Leaky relu to match dyadit
-
-        for i in range(down_t):
-            input_dim = width
-            block = nn.Sequential(
-                nn.Conv1d(input_dim, width, filter_t, stride_t, pad_t),
-                nn.LeakyReLU(0.2), # Leaky relu again
-                Resnet1D(width,
-                         depth,
-                         dilation_growth_rate,
-                         activation=activation,
-                         norm=norm),
-            )
-            blocks.append(block)
-
-        blocks.append(nn.Conv1d(width, output_emb_width, 3, 1, 1))
-        self.model = nn.Sequential(*blocks)
-
-    def forward(self, x):
-        return self.model(x)
-
 
 class Encoder_s(nn.Module):
 
@@ -680,10 +642,39 @@ class Decoder(nn.Module):
         x = self.model(x)
         return x.permute(0, 2, 1)
 
-class Decoder_Custom(nn.Module):
+class Encoder_Custom(nn.Module):
     def __init__(self,
                  input_emb_width=3,
-                 output_emb_width=512,
+                 output_emb_width=64,
+                 down_t=2,
+                 stride_t=2,
+                 width=512,
+                 depth=3,
+                 dilation_growth_rate=3,
+                 activation='leaky_relu',
+                 norm=None):
+        super().__init__()
+
+        blocks = []
+        
+        blocks.append(nn.Conv1d(input_emb_width, width, 3, stride=1, padding=1))
+        blocks.append(nn.LeakyReLU(0.2))
+        blocks.append(Resnet1D(width, depth, dilation_growth_rate, activation=activation, norm=norm))
+
+        blocks.append(nn.Conv1d(width, width, 3, stride=2, padding=1))
+        blocks.append(nn.LeakyReLU(0.2))
+        blocks.append(Resnet1D(width, depth, dilation_growth_rate, activation=activation, norm=norm))
+
+        blocks.append(nn.Conv1d(width, output_emb_width, 3, stride=2, padding=1))
+        self.model = nn.Sequential(*blocks)
+
+    def forward(self, x):
+        return self.model(x)
+
+class Decoder_Custom(nn.Module):
+    def __init__(self,
+                 input_emb_width=64,
+                 output_emb_width=3,
                  down_t=2,
                  stride_t=2,
                  width=512,
@@ -694,31 +685,103 @@ class Decoder_Custom(nn.Module):
         super().__init__()
         blocks = []
 
-        blocks.append(nn.Conv1d(output_emb_width, width, 3, 1, 1))
-        blocks.append(nn.LeakyReLU(0.2)) # Leaky relu instead of relu (matching dyadit)
+        blocks.append(nn.Conv1d(input_emb_width, width, 3, 1, 1))
+        blocks.append(nn.LeakyReLU(0.2))
 
-        for i in range(down_t):
+        for i in range(2):
             blocks.append(nn.Sequential(
-                Resnet1D(width,
-                         depth,
-                         dilation_growth_rate,
-                         reverse_dilation=True,
-                         activation=activation,
-                         norm=norm),
-                # Linear interpolation for smoother transitions (matching dyadit)
+                Resnet1D(width, depth, dilation_growth_rate, reverse_dilation=True, activation=activation, norm=norm),
                 nn.Upsample(scale_factor=2, mode='linear', align_corners=False),
+                nn.Conv1d(width, width, 3, 1, 1),
+                nn.LeakyReLU(0.2),
                 nn.Conv1d(width, width, 3, 1, 1),
                 nn.LeakyReLU(0.2)
             ))
-
-        blocks.append(nn.Conv1d(width, width, 3, 1, 1))
-        blocks.append(nn.LeakyReLU(0.2)) # leaky relu again instead of relu
-        blocks.append(nn.Conv1d(width, input_emb_width, 3, 1, 1))
+    
+        blocks.append(nn.Conv1d(width, output_emb_width, 3, 1, 1))
         self.model = nn.Sequential(*blocks)
 
     def forward(self, x):
         x = self.model(x)
         return x.permute(0, 2, 1)
+
+# class Encoder_Custom(nn.Module):
+#     def __init__(self,
+#                  input_emb_width=3,
+#                  output_emb_width=512,
+#                  down_t=2,
+#                  stride_t=2,
+#                  width=512,
+#                  depth=3,
+#                  dilation_growth_rate=3,
+#                  activation='leaky_relu',
+#                  norm=None):
+#         super().__init__()
+
+#         blocks = []
+#         filter_t, pad_t = stride_t * 2, stride_t // 2
+        
+#         blocks.append(nn.Conv1d(input_emb_width, width, 3, 1, 1))
+#         blocks.append(nn.LeakyReLU(0.2)) # Leaky relu to match dyadit
+
+#         for i in range(down_t):
+#             input_dim = width
+#             block = nn.Sequential(
+#                 nn.Conv1d(input_dim, width, filter_t, stride_t, pad_t),
+#                 nn.LeakyReLU(0.2), # Leaky relu again
+#                 Resnet1D(width,
+#                          depth,
+#                          dilation_growth_rate,
+#                          activation=activation,
+#                          norm=norm),
+#             )
+#             blocks.append(block)
+
+#         blocks.append(nn.Conv1d(width, output_emb_width, 3, 1, 1))
+#         self.model = nn.Sequential(*blocks)
+
+#     def forward(self, x):
+#         return self.model(x)
+
+# class Decoder_Custom(nn.Module):
+#     def __init__(self,
+#                  input_emb_width=3,
+#                  output_emb_width=512,
+#                  down_t=2,
+#                  stride_t=2,
+#                  width=512,
+#                  depth=3,
+#                  dilation_growth_rate=3,
+#                  activation='leaky_relu',
+#                  norm=None):
+#         super().__init__()
+#         blocks = []
+
+#         blocks.append(nn.Conv1d(output_emb_width, width, 3, 1, 1))
+#         blocks.append(nn.LeakyReLU(0.2)) # Leaky relu instead of relu (matching dyadit)
+
+#         for i in range(down_t):
+#             blocks.append(nn.Sequential(
+#                 Resnet1D(width,
+#                          depth,
+#                          dilation_growth_rate,
+#                          reverse_dilation=True,
+#                          activation=activation,
+#                          norm=norm),
+#                 # Linear interpolation for smoother transitions (matching dyadit)
+#                 nn.Upsample(scale_factor=2, mode='linear', align_corners=False),
+#                 nn.Conv1d(width, width, 3, 1, 1),
+#                 nn.LeakyReLU(0.2)
+#             ))
+
+#         blocks.append(nn.Conv1d(width, width, 3, 1, 1))
+#         blocks.append(nn.LeakyReLU(0.2)) # leaky relu again instead of relu
+#         blocks.append(nn.Conv1d(width, input_emb_width, 3, 1, 1))
+#         self.model = nn.Sequential(*blocks)
+
+#     def forward(self, x):
+#         x = self.model(x)
+#         return x.permute(0, 2, 1)
 
 
 class Decoder_s(nn.Module):
