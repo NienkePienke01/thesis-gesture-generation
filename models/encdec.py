@@ -673,7 +673,7 @@ class Encoder_Custom(nn.Module):
 
 class Decoder_Custom(nn.Module):
     def __init__(self,
-                 input_emb_width=64,
+                 input_emb_width=258,
                  output_emb_width=3,
                  down_t=2,
                  stride_t=2,
@@ -685,7 +685,7 @@ class Decoder_Custom(nn.Module):
         super().__init__()
         blocks = []
 
-        blocks.append(nn.Conv1d(input_emb_width, width, 3, 1, 1))
+        blocks.append(nn.Conv1d(output_emb_width, width, 3, 1, 1))
         blocks.append(nn.LeakyReLU(0.2))
 
         for i in range(2):
@@ -698,7 +698,7 @@ class Decoder_Custom(nn.Module):
                 nn.LeakyReLU(0.2)
             ))
     
-        blocks.append(nn.Conv1d(width, output_emb_width, 3, 1, 1))
+        blocks.append(nn.Conv1d(width, input_emb_width, 3, 1, 1))
         self.model = nn.Sequential(*blocks)
 
     def forward(self, x):
