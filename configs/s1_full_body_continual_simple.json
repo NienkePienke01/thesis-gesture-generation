@@ -20,7 +20,7 @@
         "down_t": 2,
         "stride_t": 2,
         "width": 512,
-        "depth": 6,
+        "depth": 3,
         "dilation_growth_rate": 3,
         "activation": "leaky_relu",
         "mu": 0.9
