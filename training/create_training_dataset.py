@@ -43,27 +43,48 @@ def split_source(args):
             src_env = lmdb.open(str(src['path']), readonly=True, lock=False)
             
             with src_env.begin() as src_txn:
-                # Get the size for each entry in frames (to compute total hours later)
+                # Get the unique fileid for each file and group the entries
+                file_groups = {}
                 cursor = src_txn.cursor()
-                if cursor.first():
-                    _, first_raw = cursor.item()
-                    first_entry = pickle.loads(first_raw)
-                    # Use the shape of the pose to get the sequence length (for example 64)
-                    seq_length = first_entry["pose"].shape[0]
-                else:
-                    logger.warning(f"Source {src['name']} is empty. Skipping.")
-                    continue
-
-                total = src_txn.stat()['entries']
-                indices = list(range(total))
-                random.seed(args.seed)
-                random.shuffle(indices)
-
-                num_train = int(total * src['train_percentage'])
-                num_validation = int(total * src['validation_percentage'])
+                for key, value in cursor:
+                    idx = int(key.decode('ascii'))
+                    entry = pickle.loads(value)
+                    f_id = entry["seamless_id"]
+                    
+                    if f_id not in file_groups:
+                        file_groups[f_id] = []
+                    file_groups[f_id].append(idx)
                 
-                train_indices = indices[:num_train]
-                validation_indices = indices[num_train : num_train + num_validation]
+                seq_length = entry["pose"].shape[0]
+
+                unique_ids = list(file_groups.keys())
+                random.seed(args.seed)
+                random.shuffle(unique_ids)
+
+                total_entries = src_txn.stat()['entries']
+                train_limit = int(total_entries * src['train_percentage'])
+                val_limit = int(total_entries * src['validation_percentage'])
+                
+                train_indices = []
+                validation_indices = []
+                train_file_ids = []
+                val_file_ids = []
+
+                # Setup the train and val indices
+                current_count = 0
+                for f_id in unique_ids:
+                    indices = file_groups[f_id]
+                    # Sort indices to ensure frames appear in order
+                    indices.sort() 
+                    
+                    if current_count < train_limit:
+                        train_indices.extend(indices)
+                        train_file_ids.append(f_id)
+                    elif current_count < (train_limit + val_limit):
+                        validation_indices.extend(indices)
+                        val_file_ids.append(f_id)
+                    
+                    current_count += len(indices)
 
                 # Write Train portion
                 with train_env.begin(write=True) as t_txn:
@@ -84,7 +105,9 @@ def split_source(args):
                     "requested_train_percent": src["train_percentage"],
                     "requested_val_percent": src["validation_percentage"],
                     "actual_train_count": len(train_indices),
-                    "actual_val_count": len(validation_indices)
+                    "actual_val_count": len(validation_indices),
+                    "train_file_ids": train_file_ids,
+                    "val_file_ids": val_file_ids
                 })
             src_env.close()
 
@@ -103,6 +126,9 @@ def split_source(args):
         logger.info(f"Done! Combined total: {train_idx} Train | {val_idx} Val")
     logger.info(f"Computing the STD and Mean of the data")
     
+    #----------
+    # Calculate mean and std
+    #----------
     all_data_in_6d = []
     temp_env = lmdb.open(str(output_train), readonly=True, lock=False)    
     with temp_env.begin() as txn:
@@ -128,6 +154,41 @@ def split_source(args):
         save_path = cache_dir_output / f"{args.output_name}" / "mean_and_std.pt"
         torch.save(stats, save_path)
         logger.info(f"Mean {mean} and STD {std} saved to {save_path}")
+    
+    #-----
+    # Verify dataset
+    #-----
+    logger.info("Verifying continuity in the new training set")
+    check_env = lmdb.open(str(output_train), readonly=True, lock=False)
+    with check_env.begin() as txn:
+        cursor = txn.cursor()
+        last_file = None
+        last_seg_idx = -1
+        continuity_breaks = 0
+
+        total_entries = txn.stat()['entries']
+        check_entries = min([500, total_entries])
+        
+        # Check first check_entries entries for continuity
+        for i, (key, value) in enumerate(cursor):
+            if i > check_entries: break 
+            entry = pickle.loads(value)
+            current_file = entry["seamless_id"]
+            current_seg_idx = entry["segment_index"]
+            
+            if current_file == last_file:
+                # If it's the same file, the segment index should be sequential
+                if current_seg_idx != last_seg_idx + 1:
+                    continuity_breaks += 1
+            
+            last_file = current_file
+            last_seg_idx = current_seg_idx
+            
+    if continuity_breaks == 0:
+        logger.success("Verification Passed: Segments are stored in contiguous sequences.")
+    else:
+        logger.warning(f"Verification Warning: Found {continuity_breaks} breaks in temporal sequence.")
+    check_env.close()
 
 
 
