@@ -90,7 +90,8 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
                 reconstructed_pose = (model_output["rec_pose"] * (norm_std)) + norm_mean # De-Normalize
             else:
                 model_output = model(full_body_target_pose_6d)
-                reconstructed_pose = model_output["rec_pose"]
+                # reconstructed_pose = model_output["rec_pose"]
+                reconstructed_pose = full_body_target_pose_6d
             #
             reconstructed_full_body_pose_6d = reconstructed_pose.transpose(1, 2).reshape(batch_size, chunk_frames, full_body_joint_count, 6)
             reconstructed_full_body_pose_matrix = rc.rotation_6d_to_matrix(reconstructed_full_body_pose_6d)
