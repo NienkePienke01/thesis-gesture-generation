@@ -90,6 +90,10 @@ def train_model(rank, gpu_amount_size, shared_port, args):
                 "val/total_loss": avg_validation_loss,
                 "val/rec": val_losses.get("rec", 0),
                 "val/ver": val_losses.get("ver", 0),
+                "val/vel": val_losses.get("vel", 0),
+                "val/acc": val_losses.get("acc", 0),
+                "val/commit": val_losses.get("commit", 0),
+                "val/perplexity": val_losses.get("perplexity", 0),
                 "lr": trainer.opt.param_groups[0]['lr'],
                 **{f"train/{k}": v / len(train_loader) for k, v in epoch_losses.items() if k != "total"}
             })

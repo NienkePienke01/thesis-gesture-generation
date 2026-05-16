@@ -124,29 +124,26 @@ def split_source(args):
         train_env.close()
         val_env.close()
         logger.info(f"Done! Combined total: {train_idx} Train | {val_idx} Val")
+
     logger.info(f"Computing the STD and Mean of the data")
-    
     #----------
     # Calculate mean and std
     #----------
-    all_data_in_6d = []
+    all_data_in_axis_angle = []
     temp_env = lmdb.open(str(output_train), readonly=True, lock=False)    
     with temp_env.begin() as txn:
         cursor = txn.cursor()
         for i, (key, value) in enumerate(cursor):
             entry = pickle.loads(value)
             pose_axis_angles = torch.from_numpy(entry["pose"]).float()
-            if i == 0:
-                frames, dimension = pose_axis_angles.shape
-                joint_count = dimension // 3
-            pose_matrix = rc.axis_angle_to_matrix(pose_axis_angles.reshape(frames, joint_count, 3))
-            pose_6d = rc.matrix_to_rotation_6d(pose_matrix).reshape(frames, joint_count * 6)
-            all_data_in_6d.append(pose_6d)
+            all_data_in_axis_angle.append(pose_axis_angles)
         
-        all_data_in_6d = torch.cat(all_data_in_6d, dim=0)
+        all_data_in_axis_angle = torch.cat(all_data_in_axis_angle, dim=0)
 
-        mean = torch.mean(all_data_in_6d, dim=0)
-        std = torch.std(all_data_in_6d, dim=0)
+        mean = torch.mean(all_data_in_axis_angle, dim=0)
+        std = torch.std(all_data_in_axis_angle, dim=0)
+        std[std < 1e-5] = 1.0
+
         stats = {
             "mean": mean,
             "std": std
@@ -154,7 +151,6 @@ def split_source(args):
         save_path = cache_dir_output / f"{args.output_name}" / "mean_and_std.pt"
         torch.save(stats, save_path)
         logger.info(f"Mean {mean} and STD {std} saved to {save_path}")
-    
     #-----
     # Verify dataset
     #-----

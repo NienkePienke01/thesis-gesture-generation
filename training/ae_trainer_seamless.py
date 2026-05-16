@@ -72,22 +72,30 @@ class SeamlessStage1Trainer:
             joint_count = 43
         batch_size, frames = target_pose.shape[0], target_pose.shape[1]
 
+        if self.normalize:
+            true_target_pose = target_pose
+            target_pose = (target_pose - self.norm_mean) / (self.norm_std) # normalise it
+
         # conversion from axis-angle to 6D
         target_pose_matrix = rc.axis_angle_to_matrix(target_pose.reshape(batch_size, frames, joint_count, 3))
         target_pose_6d = rc.matrix_to_rotation_6d(target_pose_matrix).reshape(batch_size, frames, joint_count * 6)
-        if self.normalize:        
-            # do a forward pass to the model
-            model_output = self.model((target_pose_6d - self.norm_mean) / (self.norm_std)) # Normalize
-            reconstructed_pose = (model_output["rec_pose"] * (self.norm_std)) + self.norm_mean # De-Normalize
-        else:
-            model_output = self.model(target_pose_6d)
-            reconstructed_pose = model_output["rec_pose"]
         
-        reconstructed_pose_6d = reconstructed_pose.transpose(1, 2).reshape(batch_size, frames, joint_count, 6) # Transpose is important here to get the right Batch, frames, channel
-        
-        # convert back to matrix form for the loss calculations
-        target_pose_matrix = rc.rotation_6d_to_matrix(target_pose_6d.reshape(batch_size, frames, joint_count, 6))
+        # Model forwarding and computing the needed variables for the losses
+        model_output = self.model(target_pose_6d)
+        reconstructed_pose = model_output["rec_pose"].transpose(1, 2) # Transpose is important here to get the right [Batch, frames, channel]
+        reconstructed_pose_6d = reconstructed_pose.reshape(batch_size, frames, joint_count, 6)
         reconstructed_pose_matrix = rc.rotation_6d_to_matrix(reconstructed_pose_6d)
+        reconstructed_pose_axis_angle = rc.matrix_to_axis_angle(reconstructed_pose_matrix).reshape(batch_size * frames, -1)
+
+        # Create all variables in denormalised space
+        if self.normalize:
+            reconstructed_pose = (reconstructed_pose_axis_angle * self.norm_std) + self.norm_mean # Denormalised
+            reconstructed_pose_axis_angle = reconstructed_pose.reshape(batch_size, frames, joint_count, 3)
+            reconstructed_pose_matrix = rc.axis_angle_to_matrix(reconstructed_pose_axis_angle)
+            # Denormalise the target pose aswell
+            target_pose = true_target_pose
+            target_pose_matrix = rc.axis_angle_to_matrix(target_pose.reshape(batch_size, frames, joint_count, 3))
+            target_pose_6d = rc.matrix_to_rotation_6d(target_pose_matrix).reshape(batch_size, frames, joint_count * 6)
         
         # compute the geodesic loss which compares rotation matrices directly
         loss_rec = self.rec_loss(reconstructed_pose_matrix, target_pose_matrix) * self.args.loss_weights.rec_weight
@@ -101,7 +109,7 @@ class SeamlessStage1Trainer:
         loss_ver = 0
         if self.args.loss_weights.ver_weight > 0:
             # convert predicted and target matrices to axis angle for prepare_smpl_input
-            reconstructed_pose_axis_angle = rc.matrix_to_axis_angle(reconstructed_pose_matrix).reshape(batch_size * frames, -1)
+            reconstructed_pose_axis_angle = reconstructed_pose_axis_angle.reshape(batch_size * frames, -1)
             target_pose_axis_angle = rc.matrix_to_axis_angle(target_pose_matrix).reshape(batch_size * frames, -1)
             # get vertices
             predicted_verts = self.smplh(**self.prepare_smpl_input(reconstructed_pose_axis_angle, self.args.mode)).vertices
@@ -161,30 +169,44 @@ class SeamlessStage1Trainer:
                 
             batch_size, frames = target_pose.shape[0], target_pose.shape[1]
 
+            if self.normalize:
+                true_target_pose = target_pose
+                target_pose = (target_pose - self.norm_mean) / (self.norm_std) # normalise it
+
             # conversion from axis-angle to 6D
             target_pose_matrix = rc.axis_angle_to_matrix(target_pose.reshape(batch_size, frames, joint_count, 3))
             target_pose_6d = rc.matrix_to_rotation_6d(target_pose_matrix).reshape(batch_size, frames, joint_count * 6)
-            if self.normalize:        
-                # do a forward pass to the model
-                model_output = self.model(target_pose_6d)
-                reconstructed_pose = (model_output["rec_pose"] * (self.norm_std)) + self.norm_mean # De-Normalize
-            else:
-                model_output = self.model(target_pose_6d)
-                reconstructed_pose = model_output["rec_pose"]
-        
-            reconstructed_pose_6d = reconstructed_pose.transpose(1, 2).reshape(batch_size, frames, joint_count, 6) # Transpose is important here to get the right Batch, frames, channel
-            
-            target_pose_matrix = rc.rotation_6d_to_matrix(target_pose_6d.reshape(batch_size, frames, joint_count, 6))
+
+            # Model forward
+            model_output = self.model(target_pose_6d)
+            reconstructed_pose = model_output["rec_pose"].transpose(1, 2) # Transpose is important here to get the right [Batch, frames, channel]
+            reconstructed_pose_6d = reconstructed_pose.reshape(batch_size, frames, joint_count, 6)
             reconstructed_pose_matrix = rc.rotation_6d_to_matrix(reconstructed_pose_6d)
+            reconstructed_pose_axis_angle = rc.matrix_to_axis_angle(reconstructed_pose_matrix).reshape(batch_size * frames, -1)
+
+            # Create all variables in denormalised space
+            if self.normalize:
+                reconstructed_pose = (reconstructed_pose_axis_angle * self.norm_std) + self.norm_mean # Denormalised
+                reconstructed_pose_axis_angle = reconstructed_pose.reshape(batch_size, frames, joint_count, 3)
+                reconstructed_pose_matrix = rc.axis_angle_to_matrix(reconstructed_pose_axis_angle)
+                # Denormalise the target pose aswell
+                target_pose = true_target_pose
+                target_pose_matrix = rc.axis_angle_to_matrix(target_pose.reshape(batch_size, frames, joint_count, 3))
+                target_pose_6d = rc.matrix_to_rotation_6d(target_pose_matrix).reshape(batch_size, frames, joint_count * 6)
             
             # reconstruction loss
             loss_rec = self.rec_loss(reconstructed_pose_matrix, target_pose_matrix) * self.args.loss_weights.rec_weight
+
+            # compute the temporal loss which is the L1 loss that checks the difference between consecutive frames
+            loss_vel = self.vel_loss(reconstructed_pose_matrix[:, 1:] - reconstructed_pose_matrix[:, :-1], target_pose_matrix[:, 1:] - target_pose_matrix[:, :-1])
+            # acceleration loss (2nd derivative)
+            loss_acc = self.vel_loss(reconstructed_pose_matrix[:, 2:] + reconstructed_pose_matrix[:, :-2] - 2 * reconstructed_pose_matrix[:, 1:-1], target_pose_matrix[:, 2:] + target_pose_matrix[:, :-2] - 2 * target_pose_matrix[:, 1:-1])
             
             # vertex loss
             loss_ver = 0
             if self.args.loss_weights.ver_weight > 0:
                 # convert predicted and target matrices to axis angle for prepare_smpl_input
-                reconstructed_pose_axis_angle = rc.matrix_to_axis_angle(reconstructed_pose_matrix).reshape(batch_size * frames, -1)
+                reconstructed_pose_axis_angle = reconstructed_pose_axis_angle.reshape(batch_size * frames, -1)
                 target_pose_axis_angle = rc.matrix_to_axis_angle(target_pose_matrix).reshape(batch_size * frames, -1)
                 # get vertices
                 predicted_verts = self.smplh(**self.prepare_smpl_input(reconstructed_pose_axis_angle, self.args.mode)).vertices
@@ -200,13 +222,25 @@ class SeamlessStage1Trainer:
                 combined_vertices_loss = (vertices_vel_loss + vertices_acc_loss) * self.args.loss_weights.ver_weight
                 loss_ver += combined_vertices_loss
 
+            # commitment loss
             loss_commit = model_output["embedding_loss"]
-            total_loss = loss_rec + loss_commit + loss_ver
+            
+            # add the weights (for loss_ver and loss_rec it is done in the calculations)
+            loss_vel = loss_vel * self.args.loss_weights.vel_weight
+            loss_acc = loss_acc * self.args.loss_weights.acc_weight
+            loss_commit = loss_commit * self.args.loss_weights.commit_weight
+            
+            # backward pass
+            total_loss = loss_rec + loss_vel + loss_acc + loss_commit + loss_ver
             
         return {
-            "total": total_loss.item(), 
-            "rec": loss_rec.item(), 
-            "ver": loss_ver.item()
+            "total": total_loss.item(),
+            "perplexity": model_output["perplexity"].item(),
+            "rec": loss_rec.item(),
+            "vel": loss_vel.item(),
+            "acc": loss_acc.item(),
+            "ver": loss_ver.item() if torch.is_tensor(loss_ver) else loss_ver,
+            "commit": loss_commit.item()
         }
     
     def prepare_smpl_input(self, model_output, mode="full"):
