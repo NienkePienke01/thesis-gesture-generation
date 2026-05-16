@@ -1,5 +1,5 @@
 {
-    "project": "s1_fullbody_not_normalized_adjusted_weights",
+    "project": "s1_full_body_continual_simple",
     "mode": "full",
     "device": "cuda",
     "gpus": [0, 1, 2, 3],
@@ -9,8 +9,8 @@
     "normalize": false,
 
     "data": {
-        "train_lmdb": "cache/training_data/training_data_filtered/training_data_filtered_train",
-        "val_lmdb": "cache/training_data/training_data_filtered/training_data_filtered_val"
+        "train_lmdb": "cache/training_data/filtered_continual/filtered_continual_train",
+        "val_lmdb": "cache/training_data/filtered_continual/filtered_continual_val"
     },
 
     "model_params": {
@@ -22,23 +22,24 @@
         "width": 512,
         "depth": 3,
         "dilation_growth_rate": 3,
-        "activation": "leaky_relu"
+        "activation": "leaky_relu",
+        "mu": 0.99
     },
 
     "training_params": {
         "batch_size": 64,
         "epochs": 800,
-        "lr_base": 0.0001,
-        "decay_epochs": 750,
+        "lr_base": 0.0003,
+        "decay_epochs": 9999,
         "grad_norm": 1.0,
         "rec_mse": false
     },
 
     "loss_weights": {
-        "rec_weight": 0.5,
+        "rec_weight": 1,
         "ver_weight": 1,
-        "vel_weight": 5,
-        "acc_weight": 10,
+        "vel_weight": 1,
+        "acc_weight": 1,
         "commit_weight": 0.05
     }
 }

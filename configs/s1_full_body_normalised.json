@@ -1,5 +1,5 @@
 {
-    "project": "seamless_stage1_training_full_body_normalized",
+    "project": "s1_full_body_normalised",
     "mode": "full",
     "device": "cuda",
     "gpus": [0, 1, 2, 3],
@@ -9,8 +9,8 @@
     "normalize": true,
 
     "data": {
-        "train_lmdb": "cache/segmenter/training_data_stage_1/training_data_stage_1_train",
-        "val_lmdb": "cache/segmenter/training_data_stage_1/training_data_stage_1_val"
+        "train_lmdb": "cache/training_data/filtered_continual/filtered_continual_train",
+        "val_lmdb": "cache/training_data/filtered_continual/filtered_continual_val"
     },
 
     "model_params": {
@@ -28,15 +28,15 @@
     "training_params": {
         "batch_size": 64,
         "epochs": 800,
-        "lr_base": 0.0002,
-        "decay_epochs": 750,
+        "lr_base": 0.0003,
+        "decay_epochs": 9999,
         "grad_norm": 1.0,
         "rec_mse": false
     },
 
     "loss_weights": {
         "rec_weight": 1,
-        "ver_weight": 2,
+        "ver_weight": 1,
         "vel_weight": 1,
         "acc_weight": 1,
         "commit_weight": 1
