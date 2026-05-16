@@ -551,7 +551,7 @@ def generate_reconstruction_comparison_video(loader_original, loader_reconstruct
     node_original, node_reconstructed = None, None
     num_frames = min(loader_original.num_frames, loader_reconstructed.num_frames)
     # FOR DEBUGGING
-    num_frames = min(450, num_frames) # Only render the first 15 seconds
+    num_frames = min(600, num_frames) # Only render the first 20 seconds
 
     for i in range(num_frames):
         # Create meshes for both
