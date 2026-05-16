@@ -30,7 +30,8 @@
         "epochs": 800,
         "lr_base": 0.0003,
         "decay_epochs": 750,
-        "grad_norm": 1.0
+        "grad_norm": 1.0,
+        "rec_mse": false
     },
 
     "loss_weights": {

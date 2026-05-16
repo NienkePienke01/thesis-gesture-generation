@@ -22,7 +22,8 @@
         "width": 512,
         "depth": 3,
         "dilation_growth_rate": 3,
-        "activation": "leaky_relu"
+        "activation": "leaky_relu",
+        "rec_mse": true
     },
 
     "training_params": {
@@ -38,6 +39,6 @@
         "ver_weight": 1,
         "vel_weight": 1,
         "acc_weight": 1,
-        "commit_weight": 0.05
+        "commit_weight": 1
     }
 }
