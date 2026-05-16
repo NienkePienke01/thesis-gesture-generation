@@ -113,7 +113,7 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
     reconstructed_loader = utils.SeamlessSMPLHLoader(target_npz_file, device=device)
     reconstructed_loader.overwrite_with_reconstructed_pose(final_reconstructed_pose)
     
-    output_video_path = utils.generate_reconstruction_comparison_video(original_loader, reconstructed_loader, progress=progress)
+    output_video_path = utils.generate_reconstruction_comparison_video(original_loader, reconstructed_loader, progress=progress, use_cache=False)
     
     return output_video_path, "Status: Side-by-Side Reconstruction Complete."
 
