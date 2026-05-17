@@ -21,8 +21,8 @@ class SeamlessStage1Trainer:
         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             self.opt, 
             mode='min', 
-            factor=0.5,
-            patience=15, # Number of epochs to wait
+            factor=0.75,
+            patience=30, # Number of epochs to wait
             verbose=True  # log to console
         )
 
