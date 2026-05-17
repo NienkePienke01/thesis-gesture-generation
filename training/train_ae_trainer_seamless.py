@@ -69,7 +69,6 @@ def train_model(rank, gpu_amount_size, shared_port, args):
         global_epoch = epoch
         train_sampler.set_epoch(epoch)
         
-        
         epoch_losses = {}
         progress_bar = tqdm(train_loader, disable=(rank != 0))
         # Training loss
@@ -79,9 +78,10 @@ def train_model(rank, gpu_amount_size, shared_port, args):
                 epoch_losses[k] = epoch_losses.get(k, 0) + v
         
         # Validation loss
+        val_losses = trainer.val_step(next(iter(validation_loader)))
+        avg_validation_loss = val_losses["total"]
+        
         if rank == 0 and (epoch % args.log_period == 0 or epoch == args.training_params.epochs - 1):
-            val_losses = trainer.val_step(next(iter(validation_loader)))
-            avg_validation_loss = val_losses["total"]
             avg_train_loss = epoch_losses["total"] / len(train_loader)
 
             wandb.log({
