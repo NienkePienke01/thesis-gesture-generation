@@ -120,7 +120,7 @@ def train_model(rank, gpu_amount_size, shared_port, args):
                             'scheduler_state_dict': trainer.scheduler.state_dict(),
                             'loss': avg_validation_loss}, complete_backup_path)
 
-        trainer.scheduler.step()
+        trainer.scheduler.step(avg_validation_loss)
     
     if rank == 0:
         final_save_path = local_checkpoint_dir / f"model_final_epoch_{global_epoch}_val_loss_{avg_validation_loss}.bin"

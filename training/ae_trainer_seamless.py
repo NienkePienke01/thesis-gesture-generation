@@ -17,7 +17,14 @@ class SeamlessStage1Trainer:
         self.model = DDP(self.model, device_ids=[gpu_id])
 
         self.opt = torch.optim.Adam(self.model.parameters(), lr=args.training_params.lr_base)
-        self.scheduler = torch.optim.lr_scheduler.StepLR(self.opt, step_size=args.training_params.decay_epochs, gamma=0.1)
+
+        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            self.opt, 
+            mode='min', 
+            factor=0.5,
+            patience=15, # Number of epochs to wait
+            verbose=True  # log to console
+        )
 
         # load smpl-h model
         self.smplh = get_smplh_model(self.device, 'male').eval()

@@ -31,7 +31,8 @@
         "lr_base": 0.0002,
         "decay_epochs": 9999,
         "grad_norm": 1.0,
-        "rec_mse": false
+        "rec_mse": false,
+        "mu": 0.99
     },
 
     "loss_weights": {
