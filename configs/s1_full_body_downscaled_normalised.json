@@ -1,5 +1,5 @@
 {
-    "project": "s1_full_body_downscaled_norrmalised",
+    "project": "s1_full_body_downscaled_normalised",
     "mode": "full",
     "device": "cuda",
     "gpus": [0, 1, 2, 3],
