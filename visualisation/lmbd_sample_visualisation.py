@@ -53,61 +53,63 @@ def fetch_ordered_lmdb_chunks(source_path, file_id):
     return lmdb_list
 
 def reconstruct_and_render_lmdb(lmdb_list, target_npz_file, device, progress=gr.Progress()):
-    """
-    Stitches the raw LMDB pose chunks together chronologically using the overlapping stride window.
-    """
     original_loader = utils.SeamlessSMPLHLoader(target_npz_file, device=device)
     
     chunk_frames = 64
     stride = 20
+
     num_chunks = len(lmdb_list)
     full_body_joint_count = 43
-    batch_size = 1 
-    
-    # Calculate complete timeline based on window overlaps
+    batch_size = 1 # We do not batch here, so its just hard set to 1
+    #
     valid_frames = (num_chunks - 1) * stride + chunk_frames
+    latent_last = None
+    pre_frames = chunk_frames - stride
     final_reconstructed_6d = torch.zeros((batch_size, valid_frames, full_body_joint_count, 6), device=device)
     
     with torch.no_grad():
         for i in range(num_chunks):
             start_frame = i * stride
             end_frame = start_frame + chunk_frames
+            chunk_tensor = lmdb_list[i]
             
-            # Prepare the raw chunk tensor [1, 64, 129]
-            chunk_tensor = lmdb_list[i].to(device).unsqueeze(0)
-            
+            # Full body
             full_body_target_pose = chunk_tensor
-            full_body_target_pose_matrix = rc.axis_angle_to_matrix(
-                full_body_target_pose.reshape(batch_size, chunk_frames, full_body_joint_count, 3)
-            )
-            full_body_target_pose_6d = rc.matrix_to_rotation_6d(full_body_target_pose_matrix).reshape(
-                batch_size, chunk_frames, full_body_joint_count * 6
-            )
+            full_body_target_pose_matrix = rc.axis_angle_to_matrix(full_body_target_pose.reshape(batch_size, chunk_frames, full_body_joint_count, 3))
+            full_body_target_pose_6d = rc.matrix_to_rotation_6d(full_body_target_pose_matrix).reshape(batch_size, chunk_frames, full_body_joint_count * 6)
             
-            # Unpack layout format
-            reconstructed_full_body_pose_6d = full_body_target_pose_6d.reshape(
-                batch_size, chunk_frames, full_body_joint_count, 6
-            )
-            
-            # Overlap-blend stitching step
+            if i > 0 and latent_last is not None:
+                # Seed the start of the current input with the end of the previous output
+                full_body_target_pose_6d[:, :pre_frames, :] = latent_last[:, -pre_frames:, :]
+
+            # Normally model output is here
+            reconstructed_pose = full_body_target_pose_6d
+            #
+            # reconstructed_full_body_pose_6d = reconstructed_pose.transpose(1, 2).reshape(batch_size, chunk_frames, full_body_joint_count, 6)
+            reconstructed_full_body_pose_6d = reconstructed_pose.reshape(batch_size, chunk_frames, full_body_joint_count, 6) # Debugging
+            reconstructed_full_body_pose_matrix = rc.rotation_6d_to_matrix(reconstructed_full_body_pose_6d)
+            reconstructed_full_body_pose_6d = rc.matrix_to_rotation_6d(reconstructed_full_body_pose_matrix)
+            # Store for next iteration's history
+            latent_last = reconstructed_full_body_pose_6d.reshape(batch_size, chunk_frames, -1)
+
+            # Placement into the final buffer
             if i == 0:
                 final_reconstructed_6d[:, start_frame:end_frame] = reconstructed_full_body_pose_6d
             else:
-                new_start = start_frame + (chunk_frames - stride)
-                final_reconstructed_6d[:, new_start:end_frame] = reconstructed_full_body_pose_6d[:, (chunk_frames - stride):]
+                # Only write the new frames
+                new_start = start_frame + pre_frames
+                final_reconstructed_6d[:, new_start:end_frame] = reconstructed_full_body_pose_6d[:, pre_frames:]
     
-    # Format and convert the stitched 6D back into axis-angle space
-    reconstructed_matrix = rc.rotation_6d_to_matrix(final_reconstructed_6d)
-    final_reconstructed_pose = rc.matrix_to_axis_angle(reconstructed_matrix).reshape(batch_size * valid_frames, -1)
+    reconstructed_6d = final_reconstructed_6d # [1, num_frames, 43, 6]
+    reconstructed_matrix = rc.rotation_6d_to_matrix(reconstructed_6d)
+    final_reconstructed_pose = rc.matrix_to_axis_angle(reconstructed_matrix).reshape(batch_size * valid_frames, -1) # [frames, channels]
 
-    # Overwrite the reference file loader coordinates with your stitched timeline
     reconstructed_loader = utils.SeamlessSMPLHLoader(target_npz_file, device=device)
     reconstructed_loader.overwrite_with_reconstructed_pose(final_reconstructed_pose)
     
-    output_video_path = utils.generate_reconstruction_comparison_video(
-        original_loader, reconstructed_loader, progress=progress, use_cache=False
-    )
-    return output_video_path, "Status: Ground-Truth LMDB Restitching Complete."
+    output_video_path = utils.generate_reconstruction_comparison_video(original_loader, reconstructed_loader, progress=progress)
+    
+    return output_video_path, "Status: Side-by-Side Reconstruction Complete."
 
 def process_lmdb_visualisation(target_npz_file, lmdb_folder, device):
     """
