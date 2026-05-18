@@ -1,5 +1,5 @@
 {
-    "project": "s1_full_body_simple_dyadid",
+    "project": "s1_full_body_simple_dyadid_new_attempt",
     "mode": "full",
     "device": "cuda",
     "gpus": [0, 1, 2, 3],
