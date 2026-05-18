@@ -33,8 +33,7 @@ def load_model_from_files(full_config, full_body_checkpoint, device):
             full_config_dict = json.load(f)
         full_body_args = SimpleNamespace(**full_config_dict)
         full_body_args.data = SimpleNamespace(**full_config_dict["data"])
-        full_body_args.model_params = SimpleNamespace(**full_config_dict["model_params"])
-        m = full_body_args.model_params
+        m = full_config_dict["model_params"]
         model = TemporalVertexCodecDownsampled(
             n_vertices=m["nb_joints"],
             latent_dim=m["output_emb_width"],
