@@ -50,11 +50,12 @@ class SeamlessStage1Trainer:
 
         target_pose = dict_data["pose"].to(self.device, non_blocking=True)
         batch_size, frames = target_pose.shape[0], target_pose.shape[1]
-
-        reconstructed_pose, loss_commit, perplexity = self.model(target_pose)
-
         target_pose_matrix = rc.axis_angle_to_matrix(target_pose.reshape(batch_size, frames, 43, 3))
-        reconstructed_pose_matrix = rc.axis_angle_to_matrix(reconstructed_pose.reshape(batch_size, frames, 43, 3))
+        target_pose_6d = rc.matrix_to_rotation_6d(target_pose_matrix).reshape(batch_size, frames, 2586)
+
+        reconstructed_pose, loss_commit, perplexity = self.model(target_pose_6d)
+
+        reconstructed_pose_matrix = rc.rotation_6d_to_matrix(reconstructed_pose.reshape(batch_size, frames, 43, 6))
         
         loss_rec = self.rec_loss(reconstructed_pose_matrix, target_pose_matrix) * self.args.loss_weights.rec_weight
 
@@ -63,15 +64,15 @@ class SeamlessStage1Trainer:
         
         loss_ver = 0
         if self.args.loss_weights.ver_weight > 0:
-            reconstructed_axis_angle = reconstructed_pose.reshape(batch_size * frames, 129)
+            reconstructed_axis_angle = rc.matrix_to_axis_angle(reconstructed_pose_matrix).reshape(batch_size * frames, 129)
             target_axis_angle = target_pose.reshape(batch_size * frames, 129)
             
             predicted_verts = self.smplh(**self.prepare_smpl_input(reconstructed_axis_angle)).vertices
             target_verts = self.smplh(**self.prepare_smpl_input(target_axis_angle)).vertices
             loss_ver = self.ver_loss(predicted_verts, target_verts) * self.args.loss_weights.ver_weight
 
-            predicted_verts = predicted_verts.reshape(batch_size, frames, -1, 3)
-            target_verts = target_verts.reshape(batch_size, frames, -1, 3)
+            # predicted_verts = predicted_verts.reshape(batch_size, frames, -1, 3)
+            # target_verts = target_verts.reshape(batch_size, frames, -1, 3)
 
             vertices_vel_loss = self.vel_loss(predicted_verts[:, 1:] - predicted_verts[:, :-1], target_verts[:, 1:] - target_verts[:, :-1])
             vertices_acc_loss = self.vel_loss(predicted_verts[:, 2:] + predicted_verts[:, :-2] - 2 * predicted_verts[:, 1:-1], target_verts[:, 2:] + target_verts[:, :-2] - 2 * target_verts[:, 1:-1])
@@ -103,11 +104,12 @@ class SeamlessStage1Trainer:
         with torch.no_grad():
             target_pose = dict_data["pose"].to(self.device, non_blocking=True)
             batch_size, frames = target_pose.shape[0], target_pose.shape[1]
-
-            reconstructed_pose, loss_commit, perplexity = self.model(target_pose)
-
             target_pose_matrix = rc.axis_angle_to_matrix(target_pose.reshape(batch_size, frames, 43, 3))
-            reconstructed_pose_matrix = rc.axis_angle_to_matrix(reconstructed_pose.reshape(batch_size, frames, 43, 3))
+            target_pose_6d = rc.matrix_to_rotation_6d(target_pose_matrix).reshape(batch_size, frames, 2586)
+
+            reconstructed_pose, loss_commit, perplexity = self.model(target_pose_6d)
+
+            reconstructed_pose_matrix = rc.rotation_6d_to_matrix(reconstructed_pose.reshape(batch_size, frames, 43, 6))
             
             loss_rec = self.rec_loss(reconstructed_pose_matrix, target_pose_matrix) * self.args.loss_weights.rec_weight
 
@@ -116,7 +118,7 @@ class SeamlessStage1Trainer:
             
             loss_ver = 0
             if self.args.loss_weights.ver_weight > 0:
-                reconstructed_axis_angle = reconstructed_pose.reshape(batch_size * frames, 129)
+                reconstructed_axis_angle = rc.matrix_to_axis_angle(reconstructed_pose_matrix).reshape(batch_size * frames, 129)
                 target_axis_angle = target_pose.reshape(batch_size * frames, 129)
                 
                 predicted_verts = self.smplh(**self.prepare_smpl_input(reconstructed_axis_angle)).vertices
