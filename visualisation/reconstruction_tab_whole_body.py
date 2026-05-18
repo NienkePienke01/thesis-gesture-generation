@@ -12,6 +12,7 @@ import copy
 from visualisation.file_browser import create_file_browser
 from utils import rotation_conversions as rc
 from models.rvq import RVQVAE
+from models_dyadit.vqvae_downsampled import TemporalVertexCodecDownsampled
 import data_processing.utils as utils
 os.environ['PYOPENGL_PLATFORM'] = 'egl'
 import math
@@ -32,11 +33,20 @@ def load_model_from_files(full_config, full_body_checkpoint, device):
             full_config_dict = json.load(f)
         full_body_args = SimpleNamespace(**full_config_dict)
         full_body_args.data = SimpleNamespace(**full_config_dict["data"])
-        full_body_model = RVQVAE(full_body_args, **full_config_dict["model_params"]).to(device)
-        full_body_model.load_state_dict(torch.load(full_body_checkpoint, map_location=device))
-        full_body_model.eval()
+        full_body_args.model_params = SimpleNamespace(**full_config_dict["model_params"])
+        m = full_body_args.model_params
+        model = TemporalVertexCodecDownsampled(
+            n_vertices=m["nb_joints"],
+            latent_dim=m["output_emb_width"],
+            categories=m["code_dim"],
+            residual_depth=m["depth"],
+            downsample_factor=m["downsample_factor"],
+        ).to(device)
 
-        _stage1_model_cache["full_body_model"] = full_body_model
+        model.load_state_dict(torch.load(full_body_checkpoint, map_location=device))
+        model.eval()
+
+        _stage1_model_cache["full_body_model"] = model
         _stage1_model_cache["normalize"] = full_body_args.normalize
         if full_body_args.normalize:
             stats_path = Path(full_body_args.data.train_lmdb).parent / "mean_and_std.pt"
@@ -92,9 +102,8 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
             
             #----
             # Model forwarding and computing the needed variables for the losses
-            model_output = model(full_body_target_pose_6d)
+            reconstructed_pose, loss_commit, perplexity = model(full_body_target_pose_6d)
             # reconstructed_pose = model_output["rec_pose"].transpose(1, 2) # Transpose is important here to get the right [Batch, frames, channel]
-            reconstructed_pose = model_output["rec_pose"]
             reconstructed_full_body_pose_6d = reconstructed_pose.reshape(batch_size, chunk_frames, full_body_joint_count, 6)
             reconstructed_full_body_pose_matrix = rc.rotation_6d_to_matrix(reconstructed_full_body_pose_6d)
             reconstructed_full_body_pose_6d = rc.matrix_to_rotation_6d(reconstructed_full_body_pose_matrix)
