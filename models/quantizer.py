@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
-import torch.distributed as dist
 import numpy as np
 def log(t, eps = 1e-20):
     return torch.log(t.clamp(min = eps))
@@ -253,11 +252,6 @@ class QuantizeEMAReset(nn.Module):
 
         code_sum = torch.matmul(code_onehot, x) # nb_code, c
         code_count = code_onehot.sum(dim=-1) # nb_code
-
-        if dist.is_initialized():
-            # Sum up the code selections from all GPUs
-            dist.all_reduce(code_sum, op=dist.ReduceOp.SUM)
-            dist.all_reduce(code_count, op=dist.ReduceOp.SUM)
 
         out = self._tile(x)
         code_rand = out[:self.nb_code]

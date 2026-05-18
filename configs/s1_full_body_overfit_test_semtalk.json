@@ -2,7 +2,7 @@
     "project": "s1_full_body_overfit_test_semtalk",
     "mode": "full",
     "device": "cuda",
-    "gpus": [0, 1],
+    "gpus": [0],
     "vae_test_dim": 258,
     "periodic_backup_after_x_epochs": 50,
     "log_period": 10,
@@ -38,8 +38,8 @@
     "loss_weights": {
         "rec_weight": 1,
         "ver_weight": 1,
-        "vel_weight": 0,
-        "acc_weight": 0,
+        "vel_weight": 1,
+        "acc_weight": 1,
         "commit_weight": 1
     }
 }
