@@ -93,7 +93,8 @@ class SeamlessStage1Trainer:
         
         # Model forwarding and computing the needed variables for the losses
         model_output = self.model(target_pose_6d)
-        reconstructed_pose = model_output["rec_pose"].transpose(1, 2) # Transpose is important here to get the right [Batch, frames, channel]
+        # reconstructed_pose = model_output["rec_pose"].transpose(1, 2) # Transpose is important here to get the right [Batch, frames, channel]
+        reconstructed_pose = model_output["rec_pose"]
         reconstructed_pose_6d = reconstructed_pose.reshape(batch_size, frames, joint_count, 6)
         reconstructed_pose_matrix = rc.rotation_6d_to_matrix(reconstructed_pose_6d)
         reconstructed_pose_axis_angle = rc.matrix_to_axis_angle(reconstructed_pose_matrix).reshape(batch_size * frames, -1)
@@ -192,7 +193,8 @@ class SeamlessStage1Trainer:
 
             # Model forward
             model_output = self.model(target_pose_6d)
-            reconstructed_pose = model_output["rec_pose"].transpose(1, 2) # Transpose is important here to get the right [Batch, frames, channel]
+            # reconstructed_pose = model_output["rec_pose"].transpose(1, 2) # Transpose is important here to get the right [Batch, frames, channel]
+            reconstructed_pose = model_output["rec_pose"]
             reconstructed_pose_6d = reconstructed_pose.reshape(batch_size, frames, joint_count, 6)
             reconstructed_pose_matrix = rc.rotation_6d_to_matrix(reconstructed_pose_6d)
             reconstructed_pose_axis_angle = rc.matrix_to_axis_angle(reconstructed_pose_matrix).reshape(batch_size * frames, -1)
