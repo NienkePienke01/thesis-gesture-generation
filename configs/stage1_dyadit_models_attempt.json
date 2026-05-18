@@ -2,14 +2,14 @@
     "project": "stage1_dyadit_models_attempt",
     "mode": "full",
     "device": "cuda",
-    "gpus": [0, 1, 2, 3],
+    "gpus": [0],
     "periodic_backup_after_x_epochs": 50,
     "log_period": 10,
     "normalize": false,
 
     "data": {
-        "train_lmdb": "cache/training_data/filtered_continual/filtered_continual_train",
-        "val_lmdb": "cache/training_data/filtered_continual/filtered_continual_val"
+        "train_lmdb": "cache/training_data/overfit_test/overfit_test_train",
+        "val_lmdb": "cache/training_data/overfit_test/overfit_test_train"
     },
 
     "model_params": {
