@@ -14,14 +14,21 @@ def create_file_browser(label, extensions=[".npz"], file_count="single"):
         ext_list = [ext.lower() for ext in (extensions if isinstance(extensions, list) else [extensions])]
         query = filter_query.strip().lower()
         
-        for root, _, files in os.walk(PROJECT_ROOT):
-            for file in files:
-                full_path = os.path.join(root, file)
-                rel_path = os.path.relpath(full_path, PROJECT_ROOT)
-                
-                if any(file.lower().endswith(ext) for ext in ext_list):
+        for root, dirs, files in os.walk(PROJECT_ROOT):
+            if file_count == "folder":
+                for dir_name in dirs:
+                    full_path = os.path.join(root, dir_name)
+                    rel_path = os.path.relpath(full_path, PROJECT_ROOT)
                     if not query or query in rel_path.lower():
                         choices.append((rel_path, full_path))
+            else:
+                for file in files:
+                    full_path = os.path.join(root, file)
+                    rel_path = os.path.relpath(full_path, PROJECT_ROOT)
+                    
+                    if any(file.lower().endswith(ext) for ext in ext_list):
+                        if not query or query in rel_path.lower():
+                            choices.append((rel_path, full_path))
         
         return sorted(choices, key=lambda x: x[0])
 

@@ -139,7 +139,7 @@ def render_lmdb_visualiser_tab(device):
         
         with gr.Row():
             target_npz_file = create_file_browser("Target Reference .NPZ File", extensions=[".npz"], file_count="single")
-            lmdb_folder_path = create_file_browser("Source LMDB Database Directory", file_count="single")
+            lmdb_folder_path = create_file_browser("Source LMDB Database Directory", file_count="folder")
         
         generate_video_button = gr.Button("Restitch & Render Database Chunks", variant="primary")
         status_markdown = gr.Markdown("Status: Waiting for input vectors...")
