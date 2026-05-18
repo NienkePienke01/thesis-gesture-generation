@@ -93,7 +93,8 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
             #----
             # Model forwarding and computing the needed variables for the losses
             model_output = model(full_body_target_pose_6d)
-            reconstructed_pose = model_output["rec_pose"].transpose(1, 2) # Transpose is important here to get the right [Batch, frames, channel]
+            # reconstructed_pose = model_output["rec_pose"].transpose(1, 2) # Transpose is important here to get the right [Batch, frames, channel]
+            reconstructed_pose = model_output["rec_pose"]
             reconstructed_full_body_pose_6d = reconstructed_pose.reshape(batch_size, chunk_frames, full_body_joint_count, 6)
             reconstructed_full_body_pose_matrix = rc.rotation_6d_to_matrix(reconstructed_full_body_pose_6d)
             reconstructed_full_body_pose_6d = rc.matrix_to_rotation_6d(reconstructed_full_body_pose_matrix)
@@ -121,7 +122,7 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
     reconstructed_6d = final_reconstructed_6d # [1, num_frames, 43, 6]
     reconstructed_matrix = rc.rotation_6d_to_matrix(reconstructed_6d)
     final_reconstructed_pose = rc.matrix_to_axis_angle(reconstructed_matrix).reshape(batch_size * valid_frames, -1) # [frames, channels]
-
+ 
     reconstructed_loader = utils.SeamlessSMPLHLoader(target_npz_file, device=device)
     reconstructed_loader.overwrite_with_reconstructed_pose(final_reconstructed_pose)
     
