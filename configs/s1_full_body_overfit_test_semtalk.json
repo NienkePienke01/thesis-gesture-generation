@@ -38,8 +38,8 @@
     "loss_weights": {
         "rec_weight": 1,
         "ver_weight": 1,
-        "vel_weight": 1,
-        "acc_weight": 1,
+        "vel_weight": 0,
+        "acc_weight": 0,
         "commit_weight": 1
     }
 }

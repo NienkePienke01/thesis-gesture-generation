@@ -14,6 +14,7 @@ class SeamlessStage1Trainer:
         self.device = torch.device(f"cuda:{gpu_id}")
 
         self.model = RVQVAE(args, **args.model_params).to(self.device)
+        self.model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(self.model)
         self.model = DDP(self.model, device_ids=[gpu_id])
 
         self.opt = torch.optim.Adam(self.model.parameters(), lr=args.training_params.lr_base)
