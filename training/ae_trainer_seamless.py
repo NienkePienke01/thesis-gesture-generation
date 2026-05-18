@@ -22,7 +22,7 @@ class SeamlessStage1Trainer:
             self.opt, 
             mode='min', 
             factor=0.75,
-            patience=30, # Number of epochs to wait
+            patience=999, # Number of epochs to wait
             verbose=True  # log to console
         )
 
