@@ -51,7 +51,7 @@ class SeamlessStage1Trainer:
         target_pose = dict_data["pose"].to(self.device, non_blocking=True)
         batch_size, frames = target_pose.shape[0], target_pose.shape[1]
         target_pose_matrix = rc.axis_angle_to_matrix(target_pose.reshape(batch_size, frames, 43, 3))
-        target_pose_6d = rc.matrix_to_rotation_6d(target_pose_matrix).reshape(batch_size, frames, 2586)
+        target_pose_6d = rc.matrix_to_rotation_6d(target_pose_matrix).reshape(batch_size, frames, 258)
 
         reconstructed_pose, loss_commit, perplexity = self.model(target_pose_6d)
 
@@ -105,7 +105,7 @@ class SeamlessStage1Trainer:
             target_pose = dict_data["pose"].to(self.device, non_blocking=True)
             batch_size, frames = target_pose.shape[0], target_pose.shape[1]
             target_pose_matrix = rc.axis_angle_to_matrix(target_pose.reshape(batch_size, frames, 43, 3))
-            target_pose_6d = rc.matrix_to_rotation_6d(target_pose_matrix).reshape(batch_size, frames, 2586)
+            target_pose_6d = rc.matrix_to_rotation_6d(target_pose_matrix).reshape(batch_size, frames, 258)
 
             reconstructed_pose, loss_commit, perplexity = self.model(target_pose_6d)
 
