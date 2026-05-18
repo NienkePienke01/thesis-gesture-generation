@@ -348,6 +348,7 @@ class BeatLoader(GenericLoader):
         self.body_model = get_smplx_model(self.device)
         
         all_poses = torch.from_numpy(self.data['poses']).float()
+        self.pose = torch.from_numpy(self.data['poses']).float()
         self.SMPLParams = SMPLModelParams(
             num_frames=self.num_frames,
             orient=all_poses[:, 0:3].view(-1, 1, 3),
