@@ -60,7 +60,14 @@ class SeamlessStage1Trainer:
         target_pose_matrix = rc.axis_angle_to_matrix(target_pose.reshape(batch_size, frames, 43, 3))
         target_pose_6d = rc.matrix_to_rotation_6d(target_pose_matrix).reshape(batch_size, frames, 258)
 
-        reconstructed_pose, loss_commit, perplexity = self.model(target_pose_6d)
+        if not hasattr(self, 'debug_done'):
+            print("DEBUG CHECK")
+            print("Target temporal variance (Should be > 0):", target_pose_6d.var(dim=1).mean().item())
+            reconstructed_pose, loss_commit, perplexity = self.model(target_pose_6d)
+            loss_commit.backward(retain_graph=True)
+            print("Encoder input conv gradient max (Should be > 0):", self.model.module.encoder.enc[0].weight.grad.abs().max().item())
+            self.opt.zero_grad()
+            self.debug_done = True
 
         reconstructed_pose_matrix = rc.rotation_6d_to_matrix(reconstructed_pose.reshape(batch_size, frames, 43, 6))
         
