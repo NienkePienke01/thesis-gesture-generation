@@ -36,10 +36,10 @@ class SeamlessStage1Trainer:
 
         self.smplh = get_smplh_model(self.device, 'male').eval()
 
-        if args.training_params.rec_mse:
-            self.rec_loss = torch.nn.MSELoss(reduction='mean')
-        else:
-            self.rec_loss = GeodesicLoss()
+        #if args.training_params.rec_mse:
+        self.rec_loss = torch.nn.MSELoss(reduction='mean')
+        #else:
+            #self.rec_loss = GeodesicLoss()
 
         self.vel_loss = torch.nn.L1Loss(reduction='mean')
         self.ver_loss = torch.nn.MSELoss(reduction='mean')
@@ -60,24 +60,16 @@ class SeamlessStage1Trainer:
         target_pose_matrix = rc.axis_angle_to_matrix(target_pose.reshape(batch_size, frames, 43, 3))
         target_pose_6d = rc.matrix_to_rotation_6d(target_pose_matrix).reshape(batch_size, frames, 258)
 
-        if not hasattr(self, 'debug_done'):
-            print("DEBUG CHECK")
-            print("Target temporal variance (Should be > 0):", target_pose_6d.var(dim=1).mean().item())
-            reconstructed_pose, loss_commit, perplexity = self.model(target_pose_6d)
-            loss_commit.backward(retain_graph=True)
-            print("Encoder input conv gradient max (Should be > 0):", self.model.module.encoder.enc[0].weight.grad.abs().max().item())
-            self.opt.zero_grad()
-            self.debug_done = True
-
-        reconstructed_pose_matrix = rc.rotation_6d_to_matrix(reconstructed_pose.reshape(batch_size, frames, 43, 6))
+        reconstructed_pose, loss_commit, perplexity = self.model(target_pose_6d)
         
-        loss_rec = self.rec_loss(reconstructed_pose_matrix, target_pose_matrix) * self.args.loss_weights.rec_weight
+        loss_rec = self.rec_loss(reconstructed_pose, target_pose_6d) * self.args.loss_weights.rec_weight
 
-        loss_vel = self.vel_loss(reconstructed_pose_matrix[:, 1:] - reconstructed_pose_matrix[:, :-1], target_pose_matrix[:, 1:] - target_pose_matrix[:, :-1])
-        loss_acc = self.vel_loss(reconstructed_pose_matrix[:, 2:] + reconstructed_pose_matrix[:, :-2] - 2 * reconstructed_pose_matrix[:, 1:-1], target_pose_matrix[:, 2:] + target_pose_matrix[:, :-2] - 2 * target_pose_matrix[:, 1:-1])
+        loss_vel = self.vel_loss(reconstructed_pose[:, 1:] - reconstructed_pose[:, :-1], target_pose_6d[:, 1:] - target_pose_6d[:, :-1])
+        loss_acc = self.vel_loss(reconstructed_pose[:, 2:] + reconstructed_pose[:, :-2] - 2 * reconstructed_pose[:, 1:-1], target_pose_6d[:, 2:] + target_pose_6d[:, :-2] - 2 * target_pose_6d[:, 1:-1])
         
         loss_ver = 0
         if self.args.loss_weights.ver_weight > 0:
+            reconstructed_pose_matrix = rc.rotation_6d_to_matrix(reconstructed_pose.reshape(batch_size, frames, 43, 6))
             reconstructed_axis_angle = rc.matrix_to_axis_angle(reconstructed_pose_matrix).reshape(batch_size * frames, 129)
             target_axis_angle = target_pose.reshape(batch_size * frames, 129)
             
@@ -122,16 +114,15 @@ class SeamlessStage1Trainer:
             target_pose_6d = rc.matrix_to_rotation_6d(target_pose_matrix).reshape(batch_size, frames, 258)
 
             reconstructed_pose, loss_commit, perplexity = self.model(target_pose_6d)
-
-            reconstructed_pose_matrix = rc.rotation_6d_to_matrix(reconstructed_pose.reshape(batch_size, frames, 43, 6))
             
-            loss_rec = self.rec_loss(reconstructed_pose_matrix, target_pose_matrix) * self.args.loss_weights.rec_weight
+            loss_rec = self.rec_loss(reconstructed_pose, target_pose_6d) * self.args.loss_weights.rec_weight
 
-            loss_vel = self.vel_loss(reconstructed_pose_matrix[:, 1:] - reconstructed_pose_matrix[:, :-1], target_pose_matrix[:, 1:] - target_pose_matrix[:, :-1])
-            loss_acc = self.vel_loss(reconstructed_pose_matrix[:, 2:] + reconstructed_pose_matrix[:, :-2] - 2 * reconstructed_pose_matrix[:, 1:-1], target_pose_matrix[:, 2:] + target_pose_matrix[:, :-2] - 2 * target_pose_matrix[:, 1:-1])
+            loss_vel = self.vel_loss(reconstructed_pose[:, 1:] - reconstructed_pose[:, :-1], target_pose_6d[:, 1:] - target_pose_6d[:, :-1])
+            loss_acc = self.vel_loss(reconstructed_pose[:, 2:] + reconstructed_pose[:, :-2] - 2 * reconstructed_pose[:, 1:-1], target_pose_6d[:, 2:] + target_pose_6d[:, :-2] - 2 * target_pose_6d[:, 1:-1])
             
             loss_ver = 0
             if self.args.loss_weights.ver_weight > 0:
+                reconstructed_pose_matrix = rc.rotation_6d_to_matrix(reconstructed_pose.reshape(batch_size, frames, 43, 6))
                 reconstructed_axis_angle = rc.matrix_to_axis_angle(reconstructed_pose_matrix).reshape(batch_size * frames, 129)
                 target_axis_angle = target_pose.reshape(batch_size * frames, 129)
                 
