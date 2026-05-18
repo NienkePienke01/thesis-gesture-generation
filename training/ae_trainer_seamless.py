@@ -93,7 +93,7 @@ class SeamlessStage1Trainer:
         
         # Model forwarding and computing the needed variables for the losses
         model_output = self.model(target_pose_6d)
-        reconstructed_pose = model_output["rec_pose"] # Transpose is important here to get the right [Batch, frames, channel]
+        reconstructed_pose = model_output["rec_pose"].transpose(1, 2) # Transpose is important here to get the right [Batch, frames, channel]
         reconstructed_pose_6d = reconstructed_pose.reshape(batch_size, frames, joint_count, 6)
         reconstructed_pose_matrix = rc.rotation_6d_to_matrix(reconstructed_pose_6d)
         reconstructed_pose_axis_angle = rc.matrix_to_axis_angle(reconstructed_pose_matrix).reshape(batch_size * frames, -1)
@@ -129,8 +129,8 @@ class SeamlessStage1Trainer:
             loss_ver = self.ver_loss(predicted_verts, target_verts) * self.args.loss_weights.ver_weight
 
             # reshape for temporal losses
-            # predicted_verts = predicted_verts.reshape(batch_size, frames, -1, 3)
-            # target_verts = target_verts.reshape(batch_size, frames, -1, 3)
+            predicted_verts = predicted_verts.reshape(batch_size, frames, -1, 3)
+            target_verts = target_verts.reshape(batch_size, frames, -1, 3)
 
             vertices_vel_loss = self.vel_loss(predicted_verts[:, 1:] - predicted_verts[:, :-1], target_verts[:, 1:] - target_verts[:, :-1])
             vertices_acc_loss = self.vel_loss(predicted_verts[:, 2:] + predicted_verts[:, :-2] - 2 * predicted_verts[:, 1:-1], target_verts[:, 2:] + target_verts[:, :-2] - 2 * target_verts[:, 1:-1])
@@ -192,7 +192,7 @@ class SeamlessStage1Trainer:
 
             # Model forward
             model_output = self.model(target_pose_6d)
-            reconstructed_pose = model_output["rec_pose"] # Transpose is important here to get the right [Batch, frames, channel]
+            reconstructed_pose = model_output["rec_pose"].transpose(1, 2) # Transpose is important here to get the right [Batch, frames, channel]
             reconstructed_pose_6d = reconstructed_pose.reshape(batch_size, frames, joint_count, 6)
             reconstructed_pose_matrix = rc.rotation_6d_to_matrix(reconstructed_pose_6d)
             reconstructed_pose_axis_angle = rc.matrix_to_axis_angle(reconstructed_pose_matrix).reshape(batch_size * frames, -1)
@@ -228,8 +228,8 @@ class SeamlessStage1Trainer:
                 loss_ver = self.ver_loss(predicted_verts, target_verts) * self.args.loss_weights.ver_weight
 
                 # reshape for temporal losses
-                # predicted_verts = predicted_verts.reshape(batch_size, frames, -1, 3)
-                # target_verts = target_verts.reshape(batch_size, frames, -1, 3)
+                predicted_verts = predicted_verts.reshape(batch_size, frames, -1, 3)
+                target_verts = target_verts.reshape(batch_size, frames, -1, 3)
 
                 vertices_vel_loss = self.vel_loss(predicted_verts[:, 1:] - predicted_verts[:, :-1], target_verts[:, 1:] - target_verts[:, :-1])
                 vertices_acc_loss = self.vel_loss(predicted_verts[:, 2:] + predicted_verts[:, :-2] - 2 * predicted_verts[:, 1:-1], target_verts[:, 2:] + target_verts[:, :-2] - 2 * target_verts[:, 1:-1])
