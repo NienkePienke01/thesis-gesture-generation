@@ -4,6 +4,7 @@ from visualisation.single_visualizer_tab import render_single_visualizer_tab
 from visualisation.dyadic_interaction_tab import render_dyadic_interaction_tab
 from visualisation.reconstruction_tab import render_reconstruction_tab
 from visualisation.reconstruction_tab_whole_body import render_full_body_reconstruction_tab
+from visualisation.lmbd_sample_visualisation import render_lmdb_visualiser_tab
 import os
 from pathlib import Path
 
@@ -37,6 +38,9 @@ def main():
             
             with gr.TabItem("Stage 1 Reconstruction (Full Body)"):
                 render_full_body_reconstruction_tab(device)
+            
+            with gr.TabItem("LMDB visualisation data check"):
+                render_lmdb_visualiser_tab(device)
 
         # Unified Global Controls
         with gr.Row(variant="compact"):
