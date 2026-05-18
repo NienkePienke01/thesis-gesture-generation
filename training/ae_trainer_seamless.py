@@ -6,9 +6,7 @@ from data_processing.utils import get_smplh_model
 from utils import rotation_conversions as rc
 from pathlib import Path
 from torch.nn.parallel import DistributedDataParallel as DDP
-
-from models_dyadit import build_model, load_checkpoint
-from models_dyadit import vqvae_downsampled as vqvae
+from models_dyadit.vqvae_downsampled import TemporalVertexCodecDownsampled
 
 class SeamlessStage1Trainer:
     def __init__(self, args, gpu_id):
@@ -16,7 +14,7 @@ class SeamlessStage1Trainer:
         self.device = torch.device(f"cuda:{gpu_id}")
 
         m = args.model_params
-        self.model = vqvae.TemporalVertexCodecDownsampled(
+        self.model = TemporalVertexCodecDownsampled(
             n_vertices=m["nb_joints"],
             latent_dim=m["output_emb_width"],
             categories=m["code_dim"],
