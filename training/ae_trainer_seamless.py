@@ -44,6 +44,13 @@ class SeamlessStage1Trainer:
         self.vel_loss = torch.nn.L1Loss(reduction='mean')
         self.ver_loss = torch.nn.MSELoss(reduction='mean')
 
+        self.body_mask = [0, 1, 3, 4, 6, 7, 9, 10]
+        self.keep_indices = [i for i in range(21) if i not in self.body_mask]
+        self.body_indices = []
+        for idx in self.keep_indices:
+            self.body_indices.extend([idx*3, idx*3+1, idx*3+2])
+        self.body_indices = torch.tensor(self.body_indices, device=self.device)
+
     def train_step(self, dict_data):
         self.model.train()
         self.opt.zero_grad()
