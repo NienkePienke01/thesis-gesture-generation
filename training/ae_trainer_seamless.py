@@ -53,8 +53,7 @@ class SeamlessStage1Trainer:
         target_pose = dict_data["pose"].to(self.device, non_blocking=True)
         batch_size, frames = target_pose.shape[0], target_pose.shape[1]
 
-        model_output = self.model(target_pose)
-        reconstructed_pose = model_output["rec_pose"]
+        reconstructed_pose, loss_commit, perplexity = self.model(target_pose)
 
         target_pose_matrix = rc.axis_angle_to_matrix(target_pose.reshape(batch_size, frames, 43, 3))
         reconstructed_pose_matrix = rc.axis_angle_to_matrix(reconstructed_pose.reshape(batch_size, frames, 43, 3))
@@ -79,8 +78,6 @@ class SeamlessStage1Trainer:
             vertices_vel_loss = self.vel_loss(predicted_verts[:, 1:] - predicted_verts[:, :-1], target_verts[:, 1:] - target_verts[:, :-1])
             vertices_acc_loss = self.vel_loss(predicted_verts[:, 2:] + predicted_verts[:, :-2] - 2 * predicted_verts[:, 1:-1], target_verts[:, 2:] + target_verts[:, :-2] - 2 * target_verts[:, 1:-1])
             loss_ver += (vertices_vel_loss + vertices_acc_loss) * self.args.loss_weights.ver_weight
-            
-        loss_commit = model_output["embedding_loss"]
         
         loss_vel = loss_vel * self.args.loss_weights.vel_weight
         loss_acc = loss_acc * self.args.loss_weights.acc_weight
@@ -95,7 +92,7 @@ class SeamlessStage1Trainer:
 
         return {
             "total": total_loss.item(),
-            "perplexity": model_output["perplexity"].item(),
+            "perplexity": perplexity,
             "rec": loss_rec.item(),
             "vel": loss_vel.item(),
             "acc": loss_acc.item(),
@@ -109,8 +106,7 @@ class SeamlessStage1Trainer:
             target_pose = dict_data["pose"].to(self.device, non_blocking=True)
             batch_size, frames = target_pose.shape[0], target_pose.shape[1]
 
-            model_output = self.model(target_pose)
-            reconstructed_pose = model_output["rec_pose"]
+            reconstructed_pose, loss_commit, perplexity = self.model(target_pose)
 
             target_pose_matrix = rc.axis_angle_to_matrix(target_pose.reshape(batch_size, frames, 43, 3))
             reconstructed_pose_matrix = rc.axis_angle_to_matrix(reconstructed_pose.reshape(batch_size, frames, 43, 3))
@@ -135,8 +131,6 @@ class SeamlessStage1Trainer:
                 vertices_vel_loss = self.vel_loss(predicted_verts[:, 1:] - predicted_verts[:, :-1], target_verts[:, 1:] - target_verts[:, :-1])
                 vertices_acc_loss = self.vel_loss(predicted_verts[:, 2:] + predicted_verts[:, :-2] - 2 * predicted_verts[:, 1:-1], target_verts[:, 2:] + target_verts[:, :-2] - 2 * target_verts[:, 1:-1])
                 loss_ver += (vertices_vel_loss + vertices_acc_loss) * self.args.loss_weights.ver_weight
-
-            loss_commit = model_output["embedding_loss"]
             
             loss_vel = loss_vel * self.args.loss_weights.vel_weight
             loss_acc = loss_acc * self.args.loss_weights.acc_weight
@@ -146,7 +140,7 @@ class SeamlessStage1Trainer:
             
         return {
             "total": total_loss.item(),
-            "perplexity": model_output["perplexity"].item(),
+            "perplexity": perplexity,
             "rec": loss_rec.item(),
             "vel": loss_vel.item(),
             "acc": loss_acc.item(),
