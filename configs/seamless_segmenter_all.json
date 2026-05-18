@@ -1,5 +1,5 @@
 {
-    "project_name": "raw_data",
+    "project_name": "all_data",
     "pose_fps": 30,
     "audio_sr": 16000,
     "pose_length": 64,

@@ -1,0 +1,14 @@
+# Motion VQ-VAE architecture (inference-only config)
+# Pass these into TemporalVertexCodecDownsampled(...) to instantiate the model.
+model:
+  nb_joints: 258            # input dim: 6D rotation × (upper body + hands) joints
+  output_emb_width: 64      # latent dim per residual codebook entry
+  code_dim: 512             # codebook size (entries per residual level)
+  depth: 4                  # residual depth (number of stacked codebooks)
+  downsample_factor: 4      # temporal compression: 96 frames -> 24 tokens
+
+# IO shape contract (at pose_length = 96 frames @ 30 fps):
+#   motion       : [B, 96, 258]   float32
+#   tokens       : [B, 24, depth] long
+#   codebook emb : [B, 24, output_emb_width]
+#   reconstructed: [B, 96, 258]   float32
