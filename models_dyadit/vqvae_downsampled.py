@@ -5,7 +5,7 @@ Modified version with 4x or 8x temporal downsampling
 
 import torch
 import torch.nn as nn
-from vqvae import ResidualVectorQuantization, TemporalVertexCodec
+from .vqvae import ResidualVectorQuantization, TemporalVertexCodec
 
 
 class TemporalVertexEncoderDownsampled(nn.Module):
