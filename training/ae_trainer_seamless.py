@@ -30,7 +30,7 @@ class SeamlessStage1Trainer:
             self.opt, 
             mode='min', 
             factor=0.75,
-            patience=999, 
+            patience=50, 
             verbose=True  
         )
 
@@ -77,8 +77,8 @@ class SeamlessStage1Trainer:
             target_verts = self.smplh(**self.prepare_smpl_input(target_axis_angle)).vertices
             loss_ver = self.ver_loss(predicted_verts, target_verts) * self.args.loss_weights.ver_weight
 
-            # predicted_verts = predicted_verts.reshape(batch_size, frames, -1, 3)
-            # target_verts = target_verts.reshape(batch_size, frames, -1, 3)
+            predicted_verts = predicted_verts.reshape(batch_size, frames, -1, 3)
+            target_verts = target_verts.reshape(batch_size, frames, -1, 3)
 
             vertices_vel_loss = self.vel_loss(predicted_verts[:, 1:] - predicted_verts[:, :-1], target_verts[:, 1:] - target_verts[:, :-1])
             vertices_acc_loss = self.vel_loss(predicted_verts[:, 2:] + predicted_verts[:, :-2] - 2 * predicted_verts[:, 1:-1], target_verts[:, 2:] + target_verts[:, :-2] - 2 * target_verts[:, 1:-1])
@@ -130,8 +130,8 @@ class SeamlessStage1Trainer:
                 target_verts = self.smplh(**self.prepare_smpl_input(target_axis_angle)).vertices
                 loss_ver = self.ver_loss(predicted_verts, target_verts) * self.args.loss_weights.ver_weight
 
-                # predicted_verts = predicted_verts.reshape(batch_size, frames, -1, 3)
-                # target_verts = target_verts.reshape(batch_size, frames, -1, 3)
+                predicted_verts = predicted_verts.reshape(batch_size, frames, -1, 3)
+                target_verts = target_verts.reshape(batch_size, frames, -1, 3)
 
                 vertices_vel_loss = self.vel_loss(predicted_verts[:, 1:] - predicted_verts[:, :-1], target_verts[:, 1:] - target_verts[:, :-1])
                 vertices_acc_loss = self.vel_loss(predicted_verts[:, 2:] + predicted_verts[:, :-2] - 2 * predicted_verts[:, 1:-1], target_verts[:, 2:] + target_verts[:, :-2] - 2 * target_verts[:, 1:-1])

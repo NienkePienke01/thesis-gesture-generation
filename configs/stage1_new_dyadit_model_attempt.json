@@ -1,0 +1,39 @@
+{
+    "project": "stage1_new_dyadit_model_attempt",
+    "mode": "full",
+    "device": "cuda",
+    "gpus": [0, 1, 2, 3],
+    "periodic_backup_after_x_epochs": 50,
+    "log_period": 10,
+    "normalize": false,
+
+    "data": {
+        "train_lmdb": "cache/training_data/filtered_continual/filtered_continual_train",
+        "val_lmdb": "cache/training_data/filtered_continual/filtered_continual_val"
+    },
+
+    "model_params": {
+        "nb_joints": 258,
+        "output_emb_width": 64,
+        "code_dim": 512,
+        "depth": 4,
+        "downsample_factor": 4
+    },
+
+    "training_params": {
+        "batch_size": 64,
+        "epochs": 800,
+        "lr_base": 0.0012,
+        "decay_epochs": 9999,
+        "grad_norm": 1.0,
+        "rec_mse": false
+    },
+
+    "loss_weights": {
+        "rec_weight": 1,
+        "ver_weight": 1,
+        "vel_weight": 1,
+        "acc_weight": 1,
+        "commit_weight": 1
+    }
+}
