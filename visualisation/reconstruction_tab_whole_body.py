@@ -18,7 +18,6 @@ import math
 
 _stage1_model_cache = {
     "full_body_model": None,
-    "normalize": False,
     "stats": None
 }
 
@@ -45,11 +44,6 @@ def load_model_from_files(full_config, full_body_checkpoint, device):
         model.eval()
 
         _stage1_model_cache["full_body_model"] = model
-        _stage1_model_cache["normalize"] = full_body_args.normalize
-        if full_body_args.normalize:
-            stats_path = Path(full_body_args.data.train_lmdb).parent / "mean_and_std.pt"
-            full_body_args.stats_path = stats_path
-            _stage1_model_cache["stats"] = torch.load(full_body_args.stats_path, map_location=device)
         
         return "Status: Full Body model loaded successfully."
     except Exception as e:
@@ -73,10 +67,6 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
     latent_last = None
     pre_frames = chunk_frames - stride
     final_reconstructed_6d = torch.zeros((batch_size, valid_frames, full_body_joint_count, 6), device=device)
-
-    if _stage1_model_cache["normalize"]:
-        norm_mean = _stage1_model_cache["stats"]["mean"]
-        norm_std = _stage1_model_cache["stats"]["std"]
     
     with torch.no_grad():
         model = _stage1_model_cache["full_body_model"]
@@ -87,9 +77,6 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
             
             # Full body
             full_body_target_pose = chunk_tensor
-
-            if _stage1_model_cache["normalize"]:
-                full_body_target_pose = (full_body_target_pose - norm_mean) / (norm_std) # normalise it
 
             full_body_target_pose_matrix = rc.axis_angle_to_matrix(full_body_target_pose.reshape(batch_size, chunk_frames, full_body_joint_count, 3))
             full_body_target_pose_6d = rc.matrix_to_rotation_6d(full_body_target_pose_matrix).reshape(batch_size, chunk_frames, full_body_joint_count * 6)
@@ -108,13 +95,6 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
             
             # Store for next iteration history
             latent_last = reconstructed_full_body_pose_6d.reshape(batch_size, chunk_frames, -1)
-
-            # Create all variables in denormalised space
-            if _stage1_model_cache["normalize"]:
-                reconstructed_pose = (reconstructed_pose_axis_angle * norm_std) + norm_mean # Denormalised
-                reconstructed_pose_axis_angle = reconstructed_pose.reshape(batch_size, chunk_frames, full_body_joint_count, 3)
-                reconstructed_full_body_pose_matrix = rc.axis_angle_to_matrix(reconstructed_pose_axis_angle)
-                reconstructed_full_body_pose_6d = rc.matrix_to_rotation_6d(reconstructed_full_body_pose_matrix)
 
             # Placement into the final buffer
             if i == 0:
