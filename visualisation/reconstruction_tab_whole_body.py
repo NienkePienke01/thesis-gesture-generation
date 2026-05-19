@@ -11,7 +11,6 @@ import trimesh
 import copy
 from visualisation.file_browser import create_file_browser
 from utils import rotation_conversions as rc
-from models.rvq import RVQVAE
 from models_dyadit.vqvae_downsampled import TemporalVertexCodecDownsampled
 import data_processing.utils as utils
 os.environ['PYOPENGL_PLATFORM'] = 'egl'
