@@ -32,9 +32,6 @@ def main():
 
             with gr.TabItem("Dyadic Interaction"):
                 render_dyadic_interaction_tab(device)
-
-            with gr.TabItem("Stage 1 Reconstruction (Hands and Upper Body)"):
-                render_reconstruction_tab(device)
             
             with gr.TabItem("Stage 1 Reconstruction (Full Body)"):
                 render_full_body_reconstruction_tab(device)
