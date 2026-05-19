@@ -98,16 +98,15 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
                 # Seed the start of the current input with the end of the previous output
                 full_body_target_pose_6d[:, :pre_frames, :] = latent_last[:, -pre_frames:, :]
             
-            #----
             # Model forwarding and computing the needed variables for the losses
             reconstructed_pose, loss_commit, perplexity = model(full_body_target_pose_6d)
-            # reconstructed_pose = model_output["rec_pose"].transpose(1, 2) # Transpose is important here to get the right [Batch, frames, channel]
+
             reconstructed_full_body_pose_6d = reconstructed_pose.reshape(batch_size, chunk_frames, full_body_joint_count, 6)
             reconstructed_full_body_pose_matrix = rc.rotation_6d_to_matrix(reconstructed_full_body_pose_6d)
             reconstructed_full_body_pose_6d = rc.matrix_to_rotation_6d(reconstructed_full_body_pose_matrix)
             reconstructed_pose_axis_angle = rc.matrix_to_axis_angle(reconstructed_full_body_pose_matrix).reshape(batch_size * chunk_frames, -1)
             
-            # Store for next iteration's history
+            # Store for next iteration history
             latent_last = reconstructed_full_body_pose_6d.reshape(batch_size, chunk_frames, -1)
 
             # Create all variables in denormalised space
@@ -116,7 +115,6 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
                 reconstructed_pose_axis_angle = reconstructed_pose.reshape(batch_size, chunk_frames, full_body_joint_count, 3)
                 reconstructed_full_body_pose_matrix = rc.axis_angle_to_matrix(reconstructed_pose_axis_angle)
                 reconstructed_full_body_pose_6d = rc.matrix_to_rotation_6d(reconstructed_full_body_pose_matrix)
-            #----
 
             # Placement into the final buffer
             if i == 0:
@@ -173,7 +171,6 @@ def reconstruct_and_render_lmdb(lmdb_list, target_npz_file, device, progress=gr.
         return None, "Status: Please load the model first."
 
     original_loader = utils.SeamlessSMPLHLoader(target_npz_file, device=device)
-    full_pose_sequence = original_loader.get_trainable_pose().to(device) # Shape: [Total_Frames, 129]
     
     chunk_frames = 64
     stride = 20
