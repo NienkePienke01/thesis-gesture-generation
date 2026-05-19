@@ -1,7 +1,6 @@
 import torch
 import smplx
 import numpy as np
-from optimizers.loss_factory import GeodesicLoss, get_loss_func
 from data_processing.utils import get_smplh_model
 from utils import rotation_conversions as rc
 from pathlib import Path
@@ -36,10 +35,7 @@ class SeamlessStage1Trainer:
 
         self.smplh = get_smplh_model(self.device, 'male').eval()
 
-        #if args.training_params.rec_mse:
         self.rec_loss = torch.nn.MSELoss(reduction='mean')
-        #else:
-            #self.rec_loss = GeodesicLoss()
 
         self.vel_loss = torch.nn.L1Loss(reduction='mean')
         self.ver_loss = torch.nn.MSELoss(reduction='mean')
