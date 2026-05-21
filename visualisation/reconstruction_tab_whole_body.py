@@ -86,13 +86,12 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
                 full_body_target_pose_6d[:, :pre_frames, :] = latent_last[:, -pre_frames:, :]
             
             # Model forwarding and computing the needed variables for the losses
-            reconstructed_pose, loss_commit, perplexity = model(full_body_target_pose_6d)
+            reconstructed_pose, _, _ = model(full_body_target_pose_6d)
 
             reconstructed_full_body_pose_6d = reconstructed_pose.reshape(batch_size, chunk_frames, full_body_joint_count, 6)
             reconstructed_full_body_pose_matrix = rc.rotation_6d_to_matrix(reconstructed_full_body_pose_6d)
             reconstructed_full_body_pose_6d = rc.matrix_to_rotation_6d(reconstructed_full_body_pose_matrix)
-            reconstructed_pose_axis_angle = rc.matrix_to_axis_angle(reconstructed_full_body_pose_matrix).reshape(batch_size * chunk_frames, -1)
-            
+
             # Store for next iteration history
             latent_last = reconstructed_full_body_pose_6d.reshape(batch_size, chunk_frames, -1)
 
@@ -103,6 +102,12 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
                 # Only write the new frames
                 new_start = start_frame + pre_frames
                 final_reconstructed_6d[:, new_start:end_frame] = reconstructed_full_body_pose_6d[:, pre_frames:]
+            
+            # DEBUG to check for snaps
+            if i > 0:
+                diff_natural = torch.norm(reconstructed_full_body_pose_6d[0, -1, 0] - reconstructed_full_body_pose_6d[0, -2, 0]).item()
+                diff_seam = torch.norm(reconstructed_full_body_pose_6d[0, pre_frames, 0] - final_reconstructed_6d[0, new_start - 1, 0]).item()
+                print(f"Chunk {i} | Natural delta: {diff_natural:.5f} | Stitch seam jump: {diff_seam:.5f}")
     
     reconstructed_6d = final_reconstructed_6d # [1, num_frames, 43, 6]
     reconstructed_matrix = rc.rotation_6d_to_matrix(reconstructed_6d)
