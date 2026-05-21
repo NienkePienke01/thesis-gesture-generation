@@ -66,7 +66,11 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
     valid_frames = (num_chunks - 1) * stride + chunk_frames
     latent_last = None
     pre_frames = chunk_frames - stride
+
     final_reconstructed_6d = torch.zeros((batch_size, valid_frames, full_body_joint_count, 6), device=device)
+    weight_mask = torch.zeros((batch_size, valid_frames, 1, 1), device=device)
+    fade_in = torch.linspace(0.0, 1.0, steps=pre_frames, device=device).view(1, -1, 1, 1)
+    fade_out = torch.linspace(1.0, 0.0, steps=pre_frames, device=device).view(1, -1, 1, 1)
     
     with torch.no_grad():
         model = _stage1_model_cache["full_body_model"]
@@ -77,7 +81,6 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
             
             # Full body
             full_body_target_pose = chunk_tensor
-
             full_body_target_pose_matrix = rc.axis_angle_to_matrix(full_body_target_pose.reshape(batch_size, chunk_frames, full_body_joint_count, 3))
             full_body_target_pose_6d = rc.matrix_to_rotation_6d(full_body_target_pose_matrix).reshape(batch_size, chunk_frames, full_body_joint_count * 6)
             
@@ -95,20 +98,17 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
             # Store for next iteration history
             latent_last = reconstructed_full_body_pose_6d.reshape(batch_size, chunk_frames, -1)
 
-            # Placement into the final buffer
-            if i == 0:
-                final_reconstructed_6d[:, start_frame:end_frame] = reconstructed_full_body_pose_6d
-            else:
-                # Only write the new frames
-                new_start = start_frame + pre_frames
-                final_reconstructed_6d[:, new_start:end_frame] = reconstructed_full_body_pose_6d[:, pre_frames:]
-            
-            # DEBUG to check for snaps
+            # Weight blending between chunks
+            chunk_weight = torch.ones((batch_size, chunk_frames, full_body_joint_count, 6), device=device)
             if i > 0:
-                diff_natural = torch.norm(reconstructed_full_body_pose_6d[0, -1, 0] - reconstructed_full_body_pose_6d[0, -2, 0]).item()
-                diff_seam = torch.norm(reconstructed_full_body_pose_6d[0, pre_frames, 0] - final_reconstructed_6d[0, new_start - 1, 0]).item()
-                print(f"Chunk {i} | Natural delta: {diff_natural:.5f} | Stitch seam jump: {diff_seam:.5f}")
+                chunk_weight[:, :pre_frames, :, :] *= fade_in
+            if i < num_chunks-1:
+                chunk_weight[:, -pre_frames:, :, :] *= fade_out
+
+            final_reconstructed_6d[:, start_frame:end_frame] += reconstructed_full_body_pose_6d * chunk_weight
+            weight_mask[:, start_frame:end_frame] += chunk_weight[:, :, :1, :1]
     
+    final_reconstructed_6d = final_reconstructed_6d / (weight_mask + 1e-8)
     reconstructed_6d = final_reconstructed_6d # [1, num_frames, 43, 6]
     reconstructed_matrix = rc.rotation_6d_to_matrix(reconstructed_6d)
     final_reconstructed_pose = rc.matrix_to_axis_angle(reconstructed_matrix).reshape(batch_size * valid_frames, -1) # [frames, channels]
