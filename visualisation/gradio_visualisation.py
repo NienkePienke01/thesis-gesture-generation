@@ -2,7 +2,6 @@ import gradio as gr
 import torch
 from visualisation.single_visualizer_tab import render_single_visualizer_tab
 from visualisation.dyadic_interaction_tab import render_dyadic_interaction_tab
-from visualisation.reconstruction_tab import render_reconstruction_tab
 from visualisation.reconstruction_tab_whole_body import render_full_body_reconstruction_tab
 from visualisation.lmbd_sample_visualisation import render_lmdb_visualiser_tab
 import os
