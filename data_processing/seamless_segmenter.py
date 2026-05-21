@@ -22,7 +22,7 @@ class SeamlessSegmenter:
     def __init__(self, dataset : SeamlessDataset, pose_fps=30, audio_sr=16000, pose_length=64, stride=10, seed=42, max_gb=10,
                  clean_first_seconds=0, clean_final_seconds=0, segment_mode='both', 
                  filter_out_of_screen_hands=False, keep_only_high_intensity_blocks=False, vad_padding_in_seconds=0, worker_id=-1,
-                 project_name="unknown"):
+                 project_name="unknown", keep_listener_backchannel=False):
         self.dataset = dataset
         if worker_id == -1:
             self.output_path = cache_dir / project_name / f"{self.dataset.name}"
@@ -42,6 +42,7 @@ class SeamlessSegmenter:
         self.keep_only_high_intensity_blocks = keep_only_high_intensity_blocks # This is only relevant for 'listener' segment mode, it will keep only high intensity VAD frames (VAD with movement)
         self.vad_padding_in_seconds = vad_padding_in_seconds # this is to not only grab the VAD section for the speaker mode but also pad it with the build up to the VAD
         self.vad_padding_in_frames = int(self.vad_padding_in_seconds * self.pose_fps)
+        self.keep_listener_backchannel = keep_listener_backchannel
         
         np.random.seed(seed)
         torch.manual_seed(seed)
@@ -110,7 +111,10 @@ class SeamlessSegmenter:
                         if self.segment_mode == 'speaking' and not (has_speech_core or has_padding): # All 0s, so skip
                             continue
                         elif self.segment_mode == 'listening' and has_speech_core: # no 0s or 0.05 so speaking actively
-                            continue
+                            # Check if speech is a short backchannel (smaller than 1 second of sound) with low intensity (no 0.2)
+                            is_backchannel = (np.sum(sample_semantic_values == 0.1) < self.pose_fps) and not np.any(sample_semantic_values == 0.2)
+                            if not is_backchannel or not self.keep_listener_backchannel:
+                                continue
 
                     sample_pose = aligned_pose[pose_start:pose_end]
                     
