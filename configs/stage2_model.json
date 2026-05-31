@@ -1,0 +1,41 @@
+{
+    "project": "stage_2_model",
+    "device": "cuda",
+    "gpus": [0],
+    "periodic_backup_after_x_epochs": 10,
+    "log_period": 10,
+
+    "stage_1_pretrain": {
+        "config_path": "configs/stage1_new_dyadit_model_attempt.json",
+        "checkpoint_path": "checkpoints/stage_1_model.bin"
+    },
+
+    "data": {
+        "train_lmdb": "cache/training_data/training_data_stage_2/training_data_stage_2_train",
+        "val_lmdb": "cache/training_data/training_data_stage_2/training_data_stage_2_val"
+    },
+
+    "model_params": {
+        "d_model": 512,
+        "nhead": 8,
+        "num_layers": 6,
+        "dim_feedforward": 2048,
+        "dropout": 0.1,
+        "max_seq_len": 64,
+        "activation": "gelu"
+    },
+
+    "training_params": {
+        "batch_size": 32,
+        "epochs": 200,
+        "lr_base": 0.0003,
+        "warmup_epochs": 5,
+        "decay_epochs": 150,
+        "grad_norm": 1.0
+    },
+
+    "loss_weights": {
+        "cross_entropy": 1.0,
+        "conversation_state_weight": 0.5
+    }
+}

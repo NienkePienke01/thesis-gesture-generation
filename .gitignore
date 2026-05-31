@@ -26,8 +26,14 @@ cache/csv_filtering_cache/
 cache/video_cache/
 wandb/
 
+# ignore training data
+cache/training_data/
+
+cache/gradio_tmp/
+
 # Ignore checkpoints
 checkpoints/*.bin
+checkpoints_stage_2/*.bin
 *.pth
 *.pt
 

@@ -40,6 +40,11 @@ class SeamlessDataset:
     def _build_path_map(self):
         """
         Scans the split folder once to map IDs to their actual disk locations.
+        Returns a map of:
+        {
+            "file_id_123": "/absolute/path/to/data/naturalistic/train/file_id_123.npz",
+            "file_id_456": "/absolute/path/to/data/naturalistic/train/file_id_456.npz"
+        }
         """
         # path based on manifest (./data/naturalistic/train)
         base_search_path = (self.data_root / self.filter_criteria.get("label", "") / self.filter_criteria.get("split", ""))
@@ -55,11 +60,23 @@ class SeamlessDataset:
         print(f"Found {len(final_map)} files out of {len(self.file_ids)} successfully.")
         return final_map
 
-    def get_interaction(self, index: int, loader_args: dict):
+    def get_interaction(self, file_id: str, loader_args: dict):
         """
         Returns a SeamlessSMPLHLoader for a specific sample.
         """
-        return SeamlessSMPLHLoader(self.samples[index], **loader_args)
+        return SeamlessSMPLHLoader(self.samples[file_id], **loader_args)
+
+    def get_interaction_pair(self, file_id: str, loader_args: dict):
+        """
+        Returns two SeamlessSMPLHLoaders for a specific sample (the of the wanted index, and its partner if present in the dataset).
+        """
+        loader_1 = SeamlessSMPLHLoader(self.samples[file_id], **loader_args)
+        loader_2 = None
+        if loader_1.meta_data is not None and loader_1.meta_data.partner_full_id:
+            loader_2_location = self.samples.get(loader_1.meta_data.partner_full_id, None)
+            if loader_2_location is not None:
+                loader_2 = SeamlessSMPLHLoader(loader_2_location, **loader_args)
+        return (loader_1, loader_2)
     
     def get_total_hours(self):
         """

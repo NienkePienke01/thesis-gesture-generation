@@ -8,21 +8,54 @@ from pathlib import Path
 from loguru import logger
 from .seamless_dataset import SeamlessDataset
 from .utils import SeamlessSMPLHLoader
-from transformers import AutoTokenizer, BertModel
+from transformers import AutoTokenizer, BertModel, Wav2Vec2Processor, HubertModel
+import torch.nn.functional as F
 import json
 import argparse
 import torch.multiprocessing as mp
 import os
 from datetime import datetime
+from dataclasses import dataclass
+from numpy.typing import NDArray
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 cache_dir = PROJECT_ROOT / "cache" / "segmenter"
+
+relationship_detail_map = {
+    "stranger": 0,
+    "coworkers": 1,
+    "friends": 2,
+    "dating/spouse/romantic_partner": 3,
+    "siblings": 4,
+    "parent_child": 5,
+    "roommates": 6,
+    "classmates": 7,
+    "neighbors": 8,
+    "familiar-generic": 9,
+    "family-generic": 10
+}
+
+@dataclass
+class LoaderSegmentationData:
+    aligned_pose : any = None
+    aligned_audio : any = None
+    aligned_words : any = None
+    aligned_emotion_list : any = None
+    aligned_semantic_values : any = None
+    aligned_off_screen_hand_values : any = None
+    num_subdivisions : any = None
+    audio_samples_per_frame : any = None
+    audio_chunk_len : any = None
+    aligned_conversation_states: any = None
+    personality_vector: any = None
+
 
 class SeamlessSegmenter:
     def __init__(self, dataset : SeamlessDataset, pose_fps=30, audio_sr=16000, pose_length=64, stride=10, seed=42, max_gb=10,
                  clean_first_seconds=0, clean_final_seconds=0, segment_mode='both', 
                  filter_out_of_screen_hands=False, keep_only_high_intensity_blocks=False, vad_padding_in_seconds=0, worker_id=-1,
-                 project_name="unknown", keep_listener_backchannel=False):
+                 project_name="unknown", keep_listener_backchannel=False, include_stage_2_partner_data=False, 
+                 relationship_detail_mandatory=False, personality_detail_mandatory=False):
         self.dataset = dataset
         if worker_id == -1:
             self.output_path = cache_dir / project_name / f"{self.dataset.name}"
@@ -43,12 +76,18 @@ class SeamlessSegmenter:
         self.vad_padding_in_seconds = vad_padding_in_seconds # this is to not only grab the VAD section for the speaker mode but also pad it with the build up to the VAD
         self.vad_padding_in_frames = int(self.vad_padding_in_seconds * self.pose_fps)
         self.keep_listener_backchannel = keep_listener_backchannel
+        self.include_stage_2_partner_data = include_stage_2_partner_data
+        self.relationship_detail_mandatory = relationship_detail_mandatory
+        self.personality_detail_mandatory = personality_detail_mandatory
         
         np.random.seed(seed)
         torch.manual_seed(seed)
 
         self.tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
         self.bert_model = BertModel.from_pretrained("bert-base-uncased").eval()
+
+        self.wav2vec2_processor = Wav2Vec2Processor.from_pretrained("facebook/hubert-large-ls960-ft")
+        self.hubert_model = HubertModel.from_pretrained("facebook/hubert-large-ls960-ft").eval()
 
     def build_cache(self):
         """Processes all interactions in a given seamless interaction dataset and writes the segments to LMDB."""
@@ -64,45 +103,42 @@ class SeamlessSegmenter:
         items = list(self.dataset.samples.items())
         for interaction_idx, (file_id, _) in enumerate(items):
             # Get a seamless loader, of the data sample for easy access to all needed information
-            loader = self.dataset.get_interaction(self.dataset.file_ids[interaction_idx], {'load_vertices': False, 'with_meta_data': True})
+            partner_loader = None
+            if self.include_stage_2_partner_data:
+                loader, partner_loader = self.dataset.get_interaction_pair(self.dataset.file_ids[interaction_idx], {'load_vertices': False, 'with_meta_data': True})
+                if partner_loader is None:
+                    continue
+                if loader.meta_data.relationship_detail is None and self.relationship_detail_mandatory:
+                    continue
+                detail_str = str(loader.meta_data.relationship_detail).lower().strip()
+                relationship_id = relationship_detail_map.get(detail_str, 0)
+            else:
+                loader = self.dataset.get_interaction(self.dataset.file_ids[interaction_idx], {'load_vertices': False, 'with_meta_data': True})
             
-            full_pose = loader.get_trainable_pose() # (frames, 129)
-            
-            # load and resample Audio
-            audio_data, _ = librosa.load(loader.meta_data.audio_file, sr=self.audio_sr)
-
-            # get the lookup table for the bert word vectors
-            bert_lookup_table = self._get_bert_transcript(loader.meta_data.transcript)
-            # get the word vectors list len(frames) containing for each index {'word': word, 'sentence': sentence, 'embedding': vector}
-            word_list = self._get_word_list(loader, bert_lookup_table)
-            # get the emotion category for each frame
-            emotion_category_frames = self._get_frame_emotions(loader)
-            # get the semantic value for each frame
-            semantic_values_list = self._get_frame_semantics(loader)
-            
-            # align the audio and pose
-            aligned_pose, aligned_audio, aligned_words, aligned_emotion_list, aligned_semantic_values, aligned_off_screen_hand_values = self._align_data(full_pose, audio_data, word_list, emotion_category_frames, semantic_values_list, loader.meta_data.hand_offscreen)
-
-            # see how many 64-frame chunks fit
-            num_subdivisions = math.floor((len(aligned_pose) - self.pose_length) / self.stride) + 1
-            audio_samples_per_frame = self.audio_sr / self.pose_fps # how many audio samples represent the duration of one motion frame
-            audio_chunk_len = int(self.pose_length * audio_samples_per_frame) # chunk sizes for the audio compared
+            loader_data = self._get_loader_segmentation_data(loader, partner_loader)
+            # Get the correct amount of subdivisions for this interaction
+            loop_subdivisions = loader_data.num_subdivisions
+            if self.include_stage_2_partner_data:
+                partner_loader_data = self._get_loader_segmentation_data(partner_loader, loader)
+                loop_subdivisions = min(loader_data.num_subdivisions, partner_loader_data.num_subdivisions)
+            if self.personality_detail_mandatory and np.all(loader_data.personality_vector == 0.0):
+                continue
 
             # Write to the database
             with env.begin(write=True) as transaction:
-                for i in range(num_subdivisions):
+                for i in range(loop_subdivisions):
                     # motion segment
                     pose_start = i * self.stride
                     pose_end = pose_start + self.pose_length
 
                     # Perhaps skip this fragment if it has any offscreen hand values and we set to filter those out
                     if self.filter_out_of_screen_hands:
-                        sample_offscreen_hand_values = aligned_off_screen_hand_values[pose_start:pose_end]
+                        sample_offscreen_hand_values = loader_data.aligned_off_screen_hand_values[pose_start:pose_end]
                         if np.any(sample_offscreen_hand_values > 0):
                             continue
 
                     # semantic values segment
-                    sample_semantic_values = aligned_semantic_values[pose_start:pose_end]
+                    sample_semantic_values = loader_data.aligned_semantic_values[pose_start:pose_end]
                     
                     # Filter (if needed) to only listener or speaker frames. This works using the semantic values where 0.0 means there is no VAD
                     if self.segment_mode != 'both':
@@ -116,21 +152,19 @@ class SeamlessSegmenter:
                             if not is_backchannel or not self.keep_listener_backchannel:
                                 continue
 
-                    sample_pose = aligned_pose[pose_start:pose_end]
+                    sample_pose = loader_data.aligned_pose[pose_start:pose_end]
                     
                     # audio segment
-                    audio_start = int(pose_start * audio_samples_per_frame)
-                    audio_end = audio_start + audio_chunk_len
-                    sample_audio = aligned_audio[audio_start:audio_end]
+                    sample_audio = loader_data.aligned_audio[pose_start:pose_end]
 
                     # word segment
-                    sample_words = aligned_words[pose_start:pose_end]
+                    sample_words = loader_data.aligned_words[pose_start:pose_end]
                     sample_bert = np.array([f["embedding"] for f in sample_words])
                     sample_word_text = np.array([f["word"] for f in sample_words])
                     sample_sentence = np.array([f["sentence"] for f in sample_words])
 
                     # emotion segment
-                    sample_emotions = aligned_emotion_list[pose_start:pose_end]
+                    sample_emotions = loader_data.aligned_emotion_list[pose_start:pose_end]
 
                     # storage setup
                     entry = {
@@ -145,6 +179,12 @@ class SeamlessSegmenter:
                         "seamless_id": loader.meta_data.full_id, # video/file ID
                         "file_path": loader.path, # the path this file came from
                     }
+                    if self.include_stage_2_partner_data:
+                        entry["partner_seamless_id"] = loader.meta_data.partner_full_id
+                        entry["partner_audio"] = partner_loader_data.aligned_audio[pose_start:pose_end]
+                        entry["conversation_states"] = loader_data.aligned_conversation_states[pose_start:pose_end]
+                        entry["social_relationship"] = relationship_id
+                        entry["personality_traits"] = loader_data.personality_vector
                     
                     key = f"{sample_idx:08d}".encode("ascii")
                     serialized_entry = pickle.dumps(entry)
@@ -160,12 +200,73 @@ class SeamlessSegmenter:
         env.close()
         logger.info(f"Finished worker {self.worker_id}. Total segments cached: {sample_idx}")
 
-    def _align_data(self, full_pose, audio_data, word_list, emotion_list, semantic_values_list, off_screen_hand_values):
+    def _get_loader_segmentation_data(self, loader, partner_loader=None):
+        device = next(self.bert_model.parameters()).device
+        data = LoaderSegmentationData()
+        full_pose = loader.get_trainable_pose() # (frames, 129)
+        num_frames_target = full_pose.shape[0]
+        # load and resample Audio
+        audio_data, _ = librosa.load(loader.meta_data.audio_file, sr=self.audio_sr)
+
+        # Compute Full-Length HuBERT Embeddings
+        input_values = self.wav2vec2_processor(audio_data, return_tensors="pt", sampling_rate=16000).input_values.to(device)
+        self.hubert_model.to(device)
+        with torch.no_grad():
+            # Extract raw hidden state sequence [1, 50Hz_Frames, 1024] or [1, 50Hz_Frames, 768]
+            hidden_states = self.hubert_model(input_values).last_hidden_state
+            
+            # Downproject if using hubert-large (1024) to keep it unified with our 768-dim models
+            if hidden_states.shape[-1] == 1024:
+                projection = torch.nn.Linear(1024, 768).to(device)
+                hidden_states = projection(hidden_states)
+        
+        # Linearly Resample 50Hz Token Timeline to Match 30fps Video Frames Total Count Exactly
+        hidden_states_flipped = hidden_states.swapaxes(-1, -2) # [1, 768, 50Hz_Frames]
+        hubert_resampled = F.interpolate(
+            hidden_states_flipped,
+            size=num_frames_target,
+            mode='linear',
+            align_corners=True
+        ).swapaxes(-1, -2).squeeze(0) # Final shape: [num_frames_target, 768]
+        audio_vectors_30fps = hubert_resampled.cpu().numpy()
+
+        # get the lookup table for the bert word vectors
+        bert_lookup_table = self._get_bert_transcript(loader.meta_data.transcript)
+        # get the word vectors list len(frames) containing for each index {'word': word, 'sentence': sentence, 'embedding': vector}
+        word_list = self._get_word_list(loader, bert_lookup_table)
+        # get the emotion category for each frame
+        emotion_category_frames = self._get_frame_emotions(loader)
+        # get the semantic value for each frame
+        semantic_values_list = self._get_frame_semantics(loader)
+        # Conversation status
+        raw_conversation_states = self._calculate_conversation_states(loader, partner_loader)
+        
+        # align the audio and pose
+        data.aligned_pose, data.aligned_audio, data.aligned_words, data.aligned_emotion_list, data.aligned_semantic_values, data.aligned_off_screen_hand_values, data.aligned_conversation_states = self._align_data(
+            full_pose, audio_vectors_30fps, word_list, emotion_category_frames, semantic_values_list, loader.meta_data.hand_offscreen, raw_conversation_states
+        )
+
+        # see how many 64-frame chunks fit
+        data.num_subdivisions = math.floor((len(data.aligned_pose) - self.pose_length) / self.stride) + 1
+        data.audio_samples_per_frame = self.audio_sr / self.pose_fps # how many audio samples represent the duration of one motion frame
+        data.audio_chunk_len = int(self.pose_length * data.audio_samples_per_frame) # chunk sizes for the audio compared_calculate_conversation_states
+
+        # personality vector
+        data.personality_vector = np.array([
+            loader.meta_data.extraversion_raw or 0.0,
+            loader.meta_data.agreeableness_raw or 0.0,
+            loader.meta_data.conscientiousness_raw or 0.0,
+            loader.meta_data.neuroticism_raw or 0.0,
+            loader.meta_data.openness_raw or 0.0
+        ], dtype=np.float32)
+        return data
+    
+    def _align_data(self, full_pose, audio_vectors, word_list, emotion_list, semantic_values_list, off_screen_hand_values, raw_conversation_states):
         """
         Aligns the motion .npz and audio .wav by finding the shortest common duration 
         """
         round_seconds_pose = full_pose.shape[0] // self.pose_fps
-        round_seconds_audio = len(audio_data) // self.audio_sr
+        round_seconds_audio = audio_vectors.shape[0] // self.pose_fps
 
         round_seconds_common = min(round_seconds_pose, round_seconds_audio)
         
@@ -177,19 +278,17 @@ class SeamlessSegmenter:
         pose_start = clipose_start_time * self.pose_fps
         pose_end = clipose_end_time * self.pose_fps
         
-        # audio indices
-        audio_start = clipose_start_time * self.audio_sr
-        audio_end = clipose_end_time * self.audio_sr
-        
+
         # slice the arrays to the aligned and cleaned window
         aligned_pose = full_pose[pose_start:pose_end]
         aligned_word_list = word_list[pose_start:pose_end]
         aligned_emotion_list = emotion_list[pose_start:pose_end]
-        aligned_audio = audio_data[audio_start:audio_end]
+        aligned_audio = audio_vectors[pose_start:pose_end]
         aligned_semantic_values = semantic_values_list[pose_start:pose_end]
         aligned_off_screen_hand_values = off_screen_hand_values[pose_start:pose_end]
+        aligned_conversation_states = raw_conversation_states[pose_start:pose_end]
         
-        return aligned_pose, aligned_audio, aligned_word_list, aligned_emotion_list, aligned_semantic_values, aligned_off_screen_hand_values
+        return aligned_pose, aligned_audio, aligned_word_list, aligned_emotion_list, aligned_semantic_values, aligned_off_screen_hand_values, aligned_conversation_states
     
     def _get_word_list(self, loader : SeamlessSMPLHLoader, bert_lookup_table : dict):
         """
@@ -275,6 +374,55 @@ class SeamlessSegmenter:
         """
         emotion_scores = loader.meta_data.emotion_scores
         return np.argmax(emotion_scores, axis=1).astype(np.int32) if emotion_scores is not None else np.full(loader.num_frames, 5, dtype=np.int32)
+
+    def _calculate_conversation_states(self, loader, partner_loader, pose_fps=30):
+        """
+        Generates a timeline that shows when the target was speaking for stage 2 training
+        
+        States:
+        0: Target Quiet (listening)
+        1: Target speaking, partner silent
+        2: Both speaking simultaneously
+        """
+        # Initialize full-duration frame tracks for both participants
+        num_frames_target = loader.num_frames
+        conversation_states = np.zeros(num_frames_target, dtype=np.int32)
+        target_speech_track = np.zeros(num_frames_target, dtype=np.int32)
+        
+        # Fill target track from raw intervals
+        target_vad_list = loader.meta_data.transcript.get('metadata:vad', [])
+        for d in target_vad_list:
+            s_frame = int(d['start'] * pose_fps)
+            e_frame = int(d['end'] * pose_fps)
+            target_speech_track[max(0, s_frame):min(num_frames_target, e_frame)] = 1
+
+        # Fill partner track
+        if partner_loader is not None:
+            num_frames_partner = partner_loader.num_frames
+            partner_speech_track = np.zeros(num_frames_partner, dtype=np.int32)
+            
+            partner_vad_list = partner_loader.meta_data.transcript.get('metadata:vad', [])
+            for d in partner_vad_list:
+                s_frame = int(d['start'] * pose_fps)
+                e_frame = int(d['end'] * pose_fps)
+                partner_speech_track[max(0, s_frame):min(num_frames_partner, e_frame)] = 1
+        else:
+            # If no partner, they are silent across the whole file duration
+            partner_speech_track = np.zeros(num_frames_target, dtype=np.int32)
+        
+        # If partner track is shorter, pad it with zeros, if longer, truncate it.
+        if len(partner_speech_track) != num_frames_target:
+            aligned_partner = np.zeros(num_frames_target, dtype=np.int32)
+            copy_len = min(len(partner_speech_track), num_frames_target)
+            aligned_partner[:copy_len] = partner_speech_track[:copy_len]
+            partner_speech_track = aligned_partner
+
+        # classify each frame index
+        conversation_states[(target_speech_track == 1) & (partner_speech_track == 0)] = 1
+        # Both target and partner chunk are 1
+        conversation_states[(target_speech_track == 1) & (partner_speech_track == 1)] = 2
+
+        return conversation_states
 
     def _get_frame_semantics(self, loader : SeamlessSMPLHLoader):
         """
@@ -424,9 +572,6 @@ def main():
     log_path.parent.mkdir(parents=True, exist_ok=True)
     logger.add(str(log_path), level="INFO")
 
-    num_workers = cli_args.workers if cli_args.workers else 4
-    logger.info(f"Initializing segmentation with {num_workers} workers on GPU {cli_args.gpu_id}")
-
     config_path = PROJECT_ROOT / cli_args.config 
     #
     with open(config_path, "r") as f:
@@ -434,6 +579,13 @@ def main():
     
     # Filter out any keys that have 'comment' in the name
     config_data = {k: v for k, v in config_data.items() if "comment" not in k.lower()}  
+
+    if config_data.get("include_stage_2_partner_data", False):
+        num_workers = 1
+        logger.info("Stage 2 partner data enabled. Forcing single worker mode (workers=1) to preserve interaction pairs.")
+    else:
+        num_workers = cli_args.workers if cli_args.workers else 4
+        logger.info(f"Initializing segmentation with {num_workers} workers on GPU {cli_args.gpu_id}")
     
     separated_files = np.array_split(all_file_ids, num_workers)
 
@@ -461,13 +613,15 @@ def main():
         logger.info(f"Merged Dataset has: {stats['entries']} entries")
         cursor = transaction.cursor()
         if cursor.first():
-            _, raw = cursor.item()
-            entry = pickle.loads(raw)
-            logger.info(f"Merged First Entry Pose shape: {entry['pose'].shape}") # should be (64, 129)
-            logger.info(f"Merged First Entry Audio shape: {entry['audio'].shape}")
-            logger.info(f"Merged First Entry BERT shape: {entry['bert'].shape}") # should be (64, 768)
-            logger.info(f"Merged First Entry Emotions shape: {entry['emotions'].shape}")
-            logger.info(f"Merged First Entry Semantics shape: {entry['semantic_scores'].shape}")
+            for key, value in cursor:
+                entry = pickle.loads(value)
+                logger.info(f"--- Key: {key.decode('ascii')} ---")
+                for field_name, field_value in entry.items():
+                    if hasattr(field_value, "shape"):
+                        logger.info(f"  {field_name} shape: {field_value.shape}")
+                    else:
+                        logger.info(f"  {field_name}: {field_value}")
+                break
         else:
             logger.error(f"Merged Dataset | Verification Failed: Database is empty/not found!")
 

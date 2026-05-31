@@ -14,6 +14,7 @@ class SeamlessDataLoader(Dataset):
         temp_env = lmdb.open(self.lmdb_path, readonly=True, lock=False, readahead=False, meminit=False)
         self.length = temp_env.stat()['entries'] 
         temp_env.close()
+        self.stage = stage
 
     def _init_database(self):
         if self.env is None:
@@ -31,10 +32,21 @@ class SeamlessDataLoader(Dataset):
                 raise IndexError(f"Index {index} not found in LMDB.")
             data = pickle.loads(byte_data)
         
-        output = {
-            "pose": torch.from_numpy(data["pose"]).float()
-        }
-
-        # Later i will add stage 2 output here
+        if self.stage == 1:
+            output = {
+                "pose": torch.from_numpy(data["pose"]).float()
+            }
+        else:
+            output = {
+                "pose": torch.from_numpy(data["pose"]).float(),
+                "audio": torch.from_numpy(data["audio"]).float(),
+                "bert": torch.from_numpy(data["bert"]).float(),
+                "semantic_scores": torch.from_numpy(data["semantic_scores"]).float(),
+                "partner_audio": torch.from_numpy(data["partner_audio"]).float(),
+                "conversation_states": torch.from_numpy(data["conversation_states"]).long(),
+                "social_relationship": torch.tensor(data["social_relationship"], dtype=torch.long),
+                "personality_traits": torch.from_numpy(data["personality_traits"]).float(),
+                "emotions": torch.from_numpy(data["emotions"]).int(),
+            }
 
         return output
