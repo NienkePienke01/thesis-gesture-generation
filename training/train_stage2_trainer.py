@@ -37,10 +37,8 @@ def train_model(rank, gpu_amount_size, shared_port, args):
     train_loader = DataLoader(train_dataset, batch_size=args.training_params.batch_size, sampler=train_sampler, pin_memory=True)
 
     # Load validation data only on rank 0
-    validation_loader = None
-    if rank == 0:
-        val_dataset = SeamlessDataLoader(args.data.val_lmdb, stage=2)
-        validation_loader = DataLoader(val_dataset, batch_size=args.training_params.batch_size, pin_memory=True)
+    val_dataset = SeamlessDataLoader(args.data.val_lmdb, stage=2)
+    validation_loader = DataLoader(val_dataset, batch_size=args.training_params.batch_size, pin_memory=True)
 
     trainer = SeamlessStage2Trainer(args, actual_gpu_id)
 
@@ -60,24 +58,15 @@ def train_model(rank, gpu_amount_size, shared_port, args):
             for k, v in losses.items():
                 epoch_losses[k] += v
         
-        # Validation Loop (Rank 0 only)
-        avg_val_losses = {"total": 0.0, "motion_loss": 0.0, "state_loss": 0.0}
-        if rank == 0 and validation_loader is not None:
-            for val_batch_data in validation_loader:
-                v_losses = trainer.val_step(val_batch_data)
-                for k, v in v_losses.items():
-                    avg_val_losses[k] += v
-            
-            # Compute averages
-            for k in avg_val_losses:
-                avg_val_losses[k] /= len(validation_loader)
+        # Validation Loop
+        val_losses = trainer.val_step(next(iter(validation_loader)))
                 
         trainer.scheduler.step()
             
         # Metrics Logging & Checkpoint Management
         if rank == 0 and (epoch % args.log_period == 0 or epoch == args.training_params.epochs - 1):
             avg_train_total = epoch_losses["total"] / len(train_loader)
-            avg_val_total = avg_val_losses["total"]
+            avg_val_total = val_losses.get("total", 0)
 
             wandb.log({
                 "epoch": epoch,
@@ -85,8 +74,8 @@ def train_model(rank, gpu_amount_size, shared_port, args):
                 "train/motion_loss": epoch_losses["motion_loss"] / len(train_loader),
                 "train/state_loss": epoch_losses["state_loss"] / len(train_loader),
                 "val/total_loss": avg_val_total,
-                "val/motion_loss": avg_val_losses["motion_loss"],
-                "val/state_loss": avg_val_losses["state_loss"],
+                "val/motion_loss": val_losses.get("motion_loss", 0),
+                "val/state_loss": val_losses.get("state_loss", 0),
                 "lr": trainer.opt.param_groups[0]['lr']
             })
             print(f"Epoch {epoch} | Train Loss: {avg_train_total:.4f} | Val Loss: {avg_val_total:.4f}")

@@ -84,15 +84,15 @@ class SeamlessStage2Trainer:
         # Ground truth tokens extraction -> Shape: (B, T_down, 4)
         gt_tokens = self._extract_stage1_tokens(target_pose_6d)
         
-        vad_integers = dict_data["conversation_states"][:, ::self.stage_1_downsample_factor].to(self.device)
-        emotions = dict_data["emotions"][:, ::self.stage_1_downsample_factor].to(self.device)
-        bert_features = dict_data["bert"][:, ::self.stage_1_downsample_factor].to(self.device)
+        vad_integers = dict_data["conversation_states"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
+        emotions = dict_data["emotions"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
+        bert_features = dict_data["bert"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
         
-        social_relationship = dict_data["social_relationship"].to(self.device)
-        personality_traits = dict_data["personality_traits"].to(self.device)
+        social_relationship = dict_data["social_relationship"].to(self.device, non_blocking=True)
+        personality_traits = dict_data["personality_traits"].to(self.device, non_blocking=True)
         
-        audio_features = dict_data["audio"][:, ::self.stage_1_downsample_factor].to(self.device)
-        partner_audio_features = dict_data["partner_audio"][:, ::self.stage_1_downsample_factor].to(self.device)
+        audio_features = dict_data["audio"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
+        partner_audio_features = dict_data["partner_audio"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
         
         # Autoregressive Slice applied across the time dimension (dim 1)
         past_motion_input = gt_tokens[:, :-1, :]
@@ -153,15 +153,15 @@ class SeamlessStage2Trainer:
         
         gt_tokens = self._extract_stage1_tokens(target_pose_6d)
         
-        vad_integers = dict_data["conversation_states"][:, ::self.stage_1_downsample_factor].to(self.device)
-        emotions = dict_data["emotions"][:, ::self.stage_1_downsample_factor].to(self.device)
-        bert_features = dict_data["bert"][:, ::self.stage_1_downsample_factor].to(self.device)
+        vad_integers = dict_data["conversation_states"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
+        emotions = dict_data["emotions"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
+        bert_features = dict_data["bert"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
         
-        social_relationship = dict_data["social_relationship"].to(self.device)
-        personality_traits = dict_data["personality_traits"].to(self.device)
+        social_relationship = dict_data["social_relationship"].to(self.device, non_blocking=True)
+        personality_traits = dict_data["personality_traits"].to(self.device, non_blocking=True)
         
-        audio_features = dict_data["audio"][:, ::self.stage_1_downsample_factor].to(self.device)
-        partner_audio_features = dict_data["partner_audio"][:, ::self.stage_1_downsample_factor].to(self.device)
+        audio_features = dict_data["audio"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
+        partner_audio_features = dict_data["partner_audio"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
         
         past_motion_input = gt_tokens[:, :-1, :]
         vad_input = vad_integers[:, :-1]
