@@ -72,7 +72,7 @@ def train_model(rank, gpu_amount_size, shared_port, args):
             for k in avg_val_losses:
                 avg_val_losses[k] /= len(validation_loader)
                 
-        trainer.scheduler.step(epoch)
+        trainer.scheduler.step()
             
         # Metrics Logging & Checkpoint Management
         if rank == 0 and (epoch % args.log_period == 0 or epoch == args.training_params.epochs - 1):
