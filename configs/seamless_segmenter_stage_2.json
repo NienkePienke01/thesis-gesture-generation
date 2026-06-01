@@ -5,7 +5,7 @@
     "pose_length": 64,
     "stride": 20, 
     "seed": 42,
-    "max_gb": 200,
+    "max_gb": 400,
     "clean_first_seconds": 0,
     "clean_final_seconds": 0,
     "_comment__": "Choose between [both, listening, speaking]",
