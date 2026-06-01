@@ -34,7 +34,13 @@ def train_model(rank, gpu_amount_size, shared_port, args):
 
     train_dataset = SeamlessDataLoader(args.data.train_lmdb, stage=2)
     train_sampler = DistributedSampler(train_dataset, num_replicas=gpu_amount_size, rank=rank)
-    train_loader = DataLoader(train_dataset, batch_size=args.training_params.batch_size, sampler=train_sampler, pin_memory=True)
+    train_loader = DataLoader(train_dataset, 
+                            batch_size=args.training_params.batch_size, 
+                            sampler=train_sampler, 
+                            pin_memory=True,
+                            num_workers=args.workers_per_gpu,
+                            persistent_workers=True
+                            )
 
     # Load validation data only on rank 0
     val_dataset = SeamlessDataLoader(args.data.val_lmdb, stage=2)
