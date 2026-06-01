@@ -33,7 +33,7 @@ cache/gradio_tmp/
 
 # Ignore checkpoints
 checkpoints/*.bin
-checkpoints_stage_2/*.bin
+checkpoints_stage_2/
 *.pth
 *.pt
 

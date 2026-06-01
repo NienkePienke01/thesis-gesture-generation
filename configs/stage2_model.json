@@ -1,7 +1,7 @@
 {
     "project": "stage_2_model",
     "device": "cuda",
-    "gpus": [0],
+    "gpus": [0, 1, 2, 3],
     "periodic_backup_after_x_epochs": 10,
     "log_period": 10,
 

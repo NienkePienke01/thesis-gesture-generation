@@ -72,8 +72,7 @@ def train_model(rank, gpu_amount_size, shared_port, args):
             for k in avg_val_losses:
                 avg_val_losses[k] /= len(validation_loader)
                 
-        # Step the Warmup/Cosine LR Scheduler
-        trainer.scheduler.step()
+        trainer.scheduler.step(epoch)
             
         # Metrics Logging & Checkpoint Management
         if rank == 0 and (epoch % args.log_period == 0 or epoch == args.training_params.epochs - 1):
