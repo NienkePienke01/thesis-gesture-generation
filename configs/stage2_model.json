@@ -7,7 +7,7 @@
 
     "stage_1_pretrain": {
         "config_path": "configs/stage1_new_dyadit_model_attempt.json",
-        "checkpoint_path": "checkpoints/stage_1_model.bin"
+        "checkpoint_path": "checkpoints/stage1_new_dyadit_model_attempt/20260519_0207/model_final_epoch_799_val_loss_0.03552431985735893.bin"
     },
 
     "data": {
