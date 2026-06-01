@@ -17,6 +17,7 @@ import os
 from datetime import datetime
 from dataclasses import dataclass
 from numpy.typing import NDArray
+import shutil
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 cache_dir = PROJECT_ROOT / "cache" / "segmenter"
@@ -55,7 +56,7 @@ class SeamlessSegmenter:
                  clean_first_seconds=0, clean_final_seconds=0, segment_mode='both', 
                  filter_out_of_screen_hands=False, keep_only_high_intensity_blocks=False, vad_padding_in_seconds=0, worker_id=-1,
                  project_name="unknown", keep_listener_backchannel=False, include_stage_2_partner_data=False, 
-                 relationship_detail_mandatory=False, personality_detail_mandatory=False):
+                 relationship_detail_mandatory=False, personality_detail_mandatory=False, single_worker_mode=False):
         self.dataset = dataset
         if worker_id == -1:
             self.output_path = cache_dir / project_name / f"{self.dataset.name}"
@@ -553,6 +554,9 @@ def merge_parts(merged_path, dataset_name, config_data):
             temp_idx = 0
 
     merged_env.close()
+    for part_path in part_paths:
+        logger.info(f"Removing processed partition directory: {part_path.name}")
+        shutil.rmtree(part_path)
     logger.info(f"Merge Complete. Final merged dataset at: {merged_path} (Total: {global_idx} segments)")
 
 def main():
@@ -594,7 +598,7 @@ def main():
         # The workers share the same GPU
         process = mp.Process(
             target=run_worker, 
-            args=(i, separated_files[i].tolist(), config_data, cli_args.dataset_path, cli_args.gpu_id)
+            args=(i if num_workers != 1 else -1, separated_files[i].tolist(), config_data, cli_args.dataset_path, cli_args.gpu_id)
         )
         process.start()
         processes.append(process)
@@ -604,26 +608,29 @@ def main():
 
     logger.info("All workers completed. Will now merge the LMDB folders in the cache directory.")
 
-    output_path = PROJECT_ROOT / "cache" / "segmenter" / config_data.get("project_name", "unknown") / dataset.name
-    merge_parts(output_path, dataset.name, config_data)
+    if num_workers > 1:
+        output_path = PROJECT_ROOT / "cache" / "segmenter" / config_data.get("project_name", "unknown") / dataset.name
+        merge_parts(output_path, dataset.name, config_data)
 
-    env = lmdb.open(str(output_path), readonly=True)
-    with env.begin() as transaction:
-        stats = env.stat()
-        logger.info(f"Merged Dataset has: {stats['entries']} entries")
-        cursor = transaction.cursor()
-        if cursor.first():
-            for key, value in cursor:
-                entry = pickle.loads(value)
-                logger.info(f"--- Key: {key.decode('ascii')} ---")
-                for field_name, field_value in entry.items():
-                    if hasattr(field_value, "shape"):
-                        logger.info(f"  {field_name} shape: {field_value.shape}")
-                    else:
-                        logger.info(f"  {field_name}: {field_value}")
-                break
-        else:
-            logger.error(f"Merged Dataset | Verification Failed: Database is empty/not found!")
+        env = lmdb.open(str(output_path), readonly=True)
+        with env.begin() as transaction:
+            stats = env.stat()
+            logger.info(f"Merged Dataset has: {stats['entries']} entries")
+            cursor = transaction.cursor()
+            if cursor.first():
+                for key, value in cursor:
+                    entry = pickle.loads(value)
+                    logger.info(f"--- Key: {key.decode('ascii')} ---")
+                    for field_name, field_value in entry.items():
+                        if hasattr(field_value, "shape"):
+                            logger.info(f"  {field_name} shape: {field_value.shape}")
+                        else:
+                            logger.info(f"  {field_name}: {field_value}")
+                    break
+            else:
+                logger.error(f"Merged Dataset | Verification Failed: Database is empty/not found!")
+    else:
+        logger.info("Single worker detected. Bypassing merge phase.")
 
 if __name__ == "__main__":
     mp.set_start_method('spawn', force=True)

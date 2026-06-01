@@ -16,6 +16,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _model_dir = str(PROJECT_ROOT / "smpl_models")
 _assets_dir = PROJECT_ROOT / "data" / "seamless" / "assets"
 _participants = pd.read_csv(_assets_dir / "participants.csv", dtype=str)
+personality_cols = ['agreeableness_raw', 'conscientiousness_raw', 'extraversion_raw', 'neuroticism_raw', 'openness_raw']
+_participants[personality_cols] = _participants[personality_cols].apply(pd.to_numeric, errors='coerce').fillna(0.0)
 _relationships = pd.read_csv(_assets_dir / "relationships.csv", dtype=str)
 _filelist = pd.read_csv(_assets_dir / "filelist.csv", dtype=str)
 _interactions = pd.read_csv(_assets_dir / "interactions.csv", dtype=str)
