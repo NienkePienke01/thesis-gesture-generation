@@ -201,16 +201,13 @@ def run_autoregressive_generation_pipeline(target_npz_path, device_str, top_k, t
     for t in range(1, total_token_frames):
         if t % 20 == 0:
             progress(0.1 + 0.5 * (t / total_token_frames), desc=f"Generating gesture tokens: Frame {t}/{total_token_frames}")
-            
-        start_index = max(0, t - max_sequence_length)
         
-        # Window slicing
-        past_motion_window = generated_tokens[:, start_index:t, :]
-        conversation_states_window = conversation_states_downsampled[:, start_index:t]
-        emotion_categories_window = emotion_categories_downsampled[:, start_index:t]
-        agent_audio_window = agent_audio_downsampled[:, start_index:t]
-        partner_audio_window = partner_audio_downsampled[:, start_index:t]
-        bert_text_window = bert_text_downsampled[:, start_index:t]
+        past_motion_window = generated_tokens[:, :t, :]
+        conversation_states_window = conversation_states_downsampled[:, :t]
+        emotion_categories_window = emotion_categories_downsampled[:, :t]
+        agent_audio_window = agent_audio_downsampled[:, :t]
+        partner_audio_window = partner_audio_downsampled[:, :t]
+        bert_text_window = bert_text_downsampled[:, :t]
         
         prediction_logits, _ = stage2_model(
             past_motion_codes=past_motion_window,
