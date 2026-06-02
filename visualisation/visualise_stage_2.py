@@ -232,7 +232,9 @@ def run_autoregressive_generation_pipeline(target_npz_path, device_str, top_k, t
             
             for layer_idx in range(4):
                 logits_layer = next_frame_logits[0, layer_idx, :]
-                sampled_id = sample_top_p_k(logits_layer, top_k=top_k, top_p=top_p, temperature=temperature)
+                # sampled_id = sample_top_p_k(logits_layer, top_k=top_k, top_p=top_p, temperature=temperature)
+                # generated_tokens[0, t, layer_idx] = sampled_id.squeeze(-1)
+                sampled_id = torch.argmax(logits_layer, dim=-1, keepdim=True)
                 generated_tokens[0, t, layer_idx] = sampled_id.squeeze(-1)
                 
             # Accumulate evaluation statistics frame by frame within this window
