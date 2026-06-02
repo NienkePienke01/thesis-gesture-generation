@@ -33,7 +33,6 @@ def load_stage2_and_stage1_pipeline(stage2_config_path, stage2_checkpoint_path, 
     """
     device = torch.device(device_str)
     try:
-        print(stage2_config_path, stage2_checkpoint_path, segmenter_config_path)
         with open(stage2_config_path, 'r') as f:
             config_dict = json.load(f)
             
@@ -149,9 +148,11 @@ def run_autoregressive_generation_pipeline(target_npz_path, device_str, top_k, t
     
     # Get partner audio
     if partner_loader is not None:
+        print("\nPARTNER FOUND!\n")
         partner_segment_data = segmenter._get_loader_segmentation_data(partner_loader, original_loader)
         partner_audio_features = torch.from_numpy(partner_segment_data.aligned_audio).unsqueeze(0).to(device).float()
     else:
+        print("\nPARTNER NOTTT FOUND!\n")
         partner_audio_features = torch.zeros_like(agent_audio_features)
         
     # Map the relationship status
@@ -229,35 +230,40 @@ def run_autoregressive_generation_pipeline(target_npz_path, device_str, top_k, t
     
     final_reconstructed_6d = torch.zeros((batch_size, valid_token_frames, full_body_joint_count, 6), device=device)
     weight_mask = torch.zeros((batch_size, valid_token_frames, 1, 1), device=device)
-    fade_in = torch.linspace(0.0, 1.0, steps=token_pre_frames, device=device).view(1, -1, 1, 1)
-    fade_out = torch.linspace(1.0, 0.0, steps=token_pre_frames, device=device).view(1, -1, 1, 1)
+    fade_in_native = torch.linspace(0.0, 1.0, steps=native_pre_frames, device=device).view(1, -1, 1, 1)
+    fade_out_native = torch.linspace(1.0, 0.0, steps=native_pre_frames, device=device).view(1, -1, 1, 1)
     
     latent_last = None
     
     for i in range(num_chunks):
+        start_native_frame = i * native_stride
+        end_native_frame = start_native_frame + native_chunk_frames
+        
         start_token_frame = i * token_stride
         end_token_frame = start_token_frame + token_chunk_frames
         chunk_tokens = generated_tokens[:, start_token_frame:end_token_frame, :]
         
-        # Decode chunk tokens into 6D rotations -> Shape: [1, 16, 258]
+        # Decode chunk tokens into 6D rotations -> Shape: [1, 64, 258]
         decoded_pose_6d = stage1_model.decode(chunk_tokens)
-        decoded_pose_6d = decoded_pose_6d.reshape(batch_size, token_chunk_frames, full_body_joint_count, 6)
+        decoded_pose_6d = decoded_pose_6d.reshape(batch_size, native_chunk_frames, full_body_joint_count, 6)
         
+        native_pre_frames = native_chunk_frames - native_stride
         if i > 0 and latent_last is not None:
-            decoded_pose_6d[:, :token_pre_frames, :, :] = latent_last[:, -token_pre_frames:, :, :]
+            decoded_pose_6d[:, :native_pre_frames, :, :] = latent_last[:, -native_pre_frames:, :, :]
             
         reconstructed_matrix_chunk = rc.rotation_6d_to_matrix(decoded_pose_6d)
         decoded_pose_6d = rc.matrix_to_rotation_6d(reconstructed_matrix_chunk)
         latent_last = decoded_pose_6d.clone()
         
-        chunk_weight = torch.ones((batch_size, token_chunk_frames, full_body_joint_count, 6), device=device)
+        chunk_weight = torch.ones((batch_size, native_chunk_frames, full_body_joint_count, 6), device=device)
+        
         if i > 0:
-            chunk_weight[:, :token_pre_frames, :, :] *= fade_in
+            chunk_weight[:, :native_pre_frames, :, :] *= fade_in_native
         if i < num_chunks - 1:
-            chunk_weight[:, -token_pre_frames:, :, :] *= fade_out
+            chunk_weight[:, -native_pre_frames:, :, :] *= fade_out_native
             
-        final_reconstructed_6d[:, start_token_frame:end_token_frame] += decoded_pose_6d * chunk_weight
-        weight_mask[:, start_token_frame:end_token_frame] += chunk_weight[:, :, :1, :1]
+        final_reconstructed_6d[:, start_native_frame:end_native_frame] += decoded_pose_6d * chunk_weight
+        weight_mask[:, start_native_frame:end_native_frame] += chunk_weight[:, :, :1, :1]
     
     final_reconstructed_6d = final_reconstructed_6d / (weight_mask + 1e-8)
     reconstructed_6d = final_reconstructed_6d # [1, num_frames, 43, 6]
@@ -277,9 +283,9 @@ def render_stage2_generation_tab(device):
     with gr.TabItem("Stage 2: Audio Gesture Generation"):
         gr.Markdown("### 1. Load System Framework (Stage 2 + Stage 1 Dependency)")
         with gr.Row():
-            stage2_config = create_file_browser("Stage 2 Config Path (.json)", extensions=[".json"], file_count="single", default_value="")
-            stage2_checkpoint = create_file_browser("Stage 2 Checkpoint Path (.bin)", extensions=[".bin"], file_count="single", default_value="")
-            segmenter_config = create_file_browser("Segmenter Config Path (.json)", extensions=[".json"], file_count="single", default_value="")
+            stage2_config = create_file_browser("Stage 2 Config Path (.json)", extensions=[".json"], file_count="single", default_value="/data/scratch/davwer_projects/mpi-thesis/configs/stage2_model.json")
+            stage2_checkpoint = create_file_browser("Stage 2 Checkpoint Path (.bin)", extensions=[".bin"], file_count="single", default_value="/data/scratch/davwer_projects/mpi-thesis/checkpoints_stage_2/stage_2_model/20260601_1840/stage2_final_epoch_199.bin")
+            segmenter_config = create_file_browser("Segmenter Config Path (.json)", extensions=[".json"], file_count="single", default_value="/data/scratch/davwer_projects/mpi-thesis/configs/seamless_segmenter_stage_2.json")
             
         load_pipeline_btn = gr.Button("Initialize Integrated Model Pipeline", variant="secondary")
         pipeline_status = gr.Markdown("Status: Waiting for initialization parameters...")
