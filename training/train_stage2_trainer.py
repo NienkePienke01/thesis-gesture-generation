@@ -50,6 +50,7 @@ def train_model(rank, gpu_amount_size, shared_port, args):
 
     top_k_checkpoints = []
     global_epoch = 0
+    total_steps = args.training_params.epochs * len(train_loader)
 
     for epoch in range(args.training_params.epochs):
         global_epoch = epoch
@@ -59,8 +60,11 @@ def train_model(rank, gpu_amount_size, shared_port, args):
         progress_bar = tqdm(train_loader, disable=(rank != 0))
         
         # Training Loop
-        for batch_data in progress_bar:
-            losses = trainer.train_step(batch_data)
+        for batch_idx, batch_data in enumerate(progress_bar):
+            current_step = (epoch * len(train_loader)) + batch_idx
+            step_percentage = current_step / total_steps
+            
+            losses = trainer.train_step(batch_data, step_percentage)
             for k, v in losses.items():
                 epoch_losses[k] += v
         

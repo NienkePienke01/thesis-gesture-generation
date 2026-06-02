@@ -72,7 +72,8 @@ class SeamlessStage2Trainer:
         # Keeps full native shape (batch_size, T_down, residual_depth)
         return self.stage1_model.encode(target_pose_6d)
 
-    def train_step(self, dict_data):
+
+    def train_step(self, dict_data, step_percentage):
         self.model.train()
         self.opt.zero_grad()
         
@@ -81,7 +82,6 @@ class SeamlessStage2Trainer:
         target_pose_matrix = rc.axis_angle_to_matrix(target_pose.reshape(batch_size, frames, 43, 3))
         target_pose_6d = rc.matrix_to_rotation_6d(target_pose_matrix).reshape(batch_size, frames, 258)
         
-        # Ground truth tokens extraction -> Shape: (B, T_down, 4)
         gt_tokens = self._extract_stage1_tokens(target_pose_6d)
         
         vad_integers = dict_data["conversation_states"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
@@ -94,16 +94,33 @@ class SeamlessStage2Trainer:
         audio_features = dict_data["audio"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
         partner_audio_features = dict_data["partner_audio"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
         
-        # Autoregressive Slice applied across the time dimension (dim 1)
-        past_motion_input = gt_tokens[:, :-1, :]
-        vad_input = vad_integers[:, :-1]
-        emotion_input = emotions[:, :-1]
+        past_motion_input = gt_tokens[:, :-1, :].clone()
+        vad_input = vad_integers[:, :-1].clone()
+        emotion_input = emotions[:, :-1].clone()
+
+        # UGM MASKING based on liveges
+        max_mask_prob = 0.40
+        cosine_mask_prob = max_mask_prob * (0.5 * (1.0 - math.cos(math.pi * step_percentage)))
         
-        # Targets shifted forward by +1 frame step
+        mask_token_id = 0 
+        token_mask_indices = torch.rand(past_motion_input.shape, device=self.device) < cosine_mask_prob
+        past_motion_input[token_mask_indices] = mask_token_id
+
+        # RM MASKING based on liveges
+        # Randomly noises out secondary context channels 15% of the time 
+        if torch.rand(1).item() < 0.15:
+            rand_val = torch.rand(1).item()
+            if rand_val < 0.33:
+                vad_input = torch.randint(0, 3, vad_input.shape, device=self.device) # randomise vad to make it harder for the model
+            elif rand_val < 0.66:
+                emotion_input = torch.full_like(emotion_input, 5) # default/neutral emotion index
+            else:
+                # Mask out the personality traits vector to break speaker ID memorization
+                personality_traits = torch.zeros_like(personality_traits)
+        
         target_tokens = gt_tokens[:, 1:, :]
         target_states = vad_integers[:, 1:]
 
-        # Forward pass -> pred_logits layout matches (B, T-1, 4, vocab_size)
         pred_logits, pred_state_logits = self.model(
             past_motion_codes=past_motion_input,
             vad_integers=vad_input,
@@ -115,12 +132,10 @@ class SeamlessStage2Trainer:
             bert_features=bert_features[:, :-1]
         )
         
-        # Loop over the 4 codebook depths to compute cross-entropy loss
         motion_loss = 0
         for i in range(4):
-            layer_pred = pred_logits[:, :, i, :]    # (B, T-1, vocab_size)
-            layer_target = target_tokens[:, :, i]   # (B, T-1)
-            
+            layer_pred = pred_logits[:, :, i, :]
+            layer_target = target_tokens[:, :, i]
             motion_loss += self.motion_loss_fn(
                 layer_pred.reshape(-1, layer_pred.size(-1)), 
                 layer_target.reshape(-1)
@@ -128,11 +143,9 @@ class SeamlessStage2Trainer:
         motion_loss = motion_loss / 4
         
         state_loss = self.state_loss_fn(pred_state_logits.reshape(-1, pred_state_logits.size(-1)), target_states.reshape(-1))
-        
         total_loss = (self.args.loss_weights.cross_entropy * motion_loss) + (self.args.loss_weights.conversation_state_weight * state_loss)
                      
         total_loss.backward()
-        
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.training_params.grad_norm)
         self.opt.step()
         

@@ -194,18 +194,17 @@ def generate_stage2_tokens(target_npz_path, device_str, top_k, top_p, temperatur
     # Sliding window token generation loop
     for t in range(1, total_token_frames):
         if t % 20 == 0:
-            progress(0.1 + 0.5 * (t / total_token_frames), desc=f"Evaluating training match: Frame {t}/{total_token_frames}")
+            progress(0.1 + 0.5 * (t / total_token_frames), desc=f"Evaluating: Frame {t}/{total_token_frames}")
         
         window_start = max(0, t - (max_sequence_length - 1))
         
-        # teacher forcing like in train_step
         past_motion_window = gt_tokens[:, window_start:t, :]
         
-        conversation_states_window = conversation_states_downsampled[:, window_start:t]
-        emotion_categories_window = emotion_categories_downsampled[:, window_start:t]
-        agent_audio_window = agent_audio_downsampled[:, window_start:t]
-        partner_audio_window = partner_audio_downsampled[:, window_start:t]
-        bert_text_window = bert_text_downsampled[:, window_start:t]
+        conversation_states_window = conversation_states_downsampled[:, window_start:t+1]
+        emotion_categories_window = emotion_categories_downsampled[:, window_start:t+1]
+        agent_audio_window = agent_audio_downsampled[:, window_start:t+1]
+        partner_audio_window = partner_audio_downsampled[:, window_start:t+1]
+        bert_text_window = bert_text_downsampled[:, window_start:t+1]
         
         prediction_logits, _ = stage2_model(
             past_motion_codes=past_motion_window,
@@ -223,19 +222,7 @@ def generate_stage2_tokens(target_npz_path, device_str, top_k, top_p, temperatur
         for layer_idx in range(4):
             logits_layer = next_frame_logits[0, layer_idx, :]
             sampled_id = torch.argmax(logits_layer, dim=-1, keepdim=True)
-            # Store to calculate accuracy metrics
             generated_tokens[0, t, layer_idx] = sampled_id.squeeze(-1)
-            
-        # Evaluation accounting
-        total_eval_frames += 1
-        is_strict_match = True
-        for layer_idx in range(4):
-            if generated_tokens[0, t, layer_idx] == gt_tokens[0, t, layer_idx]:
-                match_counts[layer_idx] += 1
-            else:
-                is_strict_match = False
-        if is_strict_match:
-            strict_hit_count += 1
 
     # Model perfomance evaluation
     print("\n" + "="*50)

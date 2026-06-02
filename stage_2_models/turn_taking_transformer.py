@@ -50,8 +50,9 @@ class TurnTakingTransformer(nn.Module):
         self.final_head = nn.Linear(d_model, vocab_size * 4) 
         self.state_head = nn.Linear(d_model, 3) 
 
-    def _generate_causal_mask(self, sz, device):
-        mask = torch.triu(torch.ones(sz, sz, device=device), diagonal=1) == 1
+    def _generate_causal_mask(self, tgt_sz, mem_sz, device):
+        # Creates a mask of shape (tgt_sz, mem_sz)
+        mask = torch.triu(torch.ones(tgt_sz, mem_sz, device=device), diagonal=1) == 1
         return mask.float().masked_fill(mask, float('-inf'))
 
     def forward(self, past_motion_codes, vad_integers, emotion_categories, social_relationship, 
@@ -59,6 +60,7 @@ class TurnTakingTransformer(nn.Module):
         
         # Expected input shape for past_motion_codes (B, T, 4)
         batch_size, seq_len, num_layers = past_motion_codes.shape
+        audio_len = audio_features.shape[1]
         
         # Embed all 4 code layers -> (B, T, 4, d_model) and sum them to form one frame vector -> (B, T, d_model)
         m_emb = self.motion_embedding(past_motion_codes).sum(dim=2)
@@ -79,13 +81,14 @@ class TurnTakingTransformer(nn.Module):
         # context_bank = torch.cat([aud_emb, part_aud_emb, txt_emb], dim=1) # Depends if we want to look into the future for context
         context_bank = aud_emb + part_aud_emb + txt_emb # with this we do not
         
-        tgt_mask = self._generate_causal_mask(seq_len, past_motion_codes.device)
+        tgt_mask = self._generate_causal_mask(seq_len, seq_len, past_motion_codes.device)
+        memory_mask = self._generate_causal_mask(seq_len, audio_len, past_motion_codes.device)
         
         fused_hidden = self.transformer_decoder(
             tgt=main_sequence,
             memory=context_bank,
             tgt_mask=tgt_mask,
-            memory_mask=tgt_mask
+            memory_mask=memory_mask
         )
         
         # Compute multi-layer classification logits
