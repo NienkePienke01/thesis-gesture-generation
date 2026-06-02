@@ -131,11 +131,14 @@ def run_autoregressive_generation_pipeline(target_npz_path, device_str, top_k, t
     # Initialize asset dataset and loaders
     original_loader = utils.SeamlessSMPLHLoader(target_npz_path, device=device, with_meta_data=True, load_vertices=True)
     partner_loader = None
-    if original_loader.meta_data.partner_full_id:
-        partner_filename = f"{original_loader.meta_data.partner_full_id}.npz"
-        partner_path = Path(target_npz_path).parent / partner_filename
-        if partner_path.exists():
-            partner_loader = utils.SeamlessSMPLHLoader(str(partner_path), device=device, with_meta_data=True, load_vertices=False)
+    if original_loader.meta_data and original_loader.meta_data.partner_full_id:
+        # Recursively look for the partner file
+        search_root = Path(target_npz_path).parents[2]
+        disk_map = {path.stem: str(path.absolute()) for path in search_root.rglob("*.npz")}
+        
+        partner_path = disk_map.get(original_loader.meta_data.partner_full_id)
+        if partner_path:
+            partner_loader = utils.SeamlessSMPLHLoader(partner_path, device=device, with_meta_data=True, load_vertices=False)
 
     # use the segmenter for processed data
     segment_data = segmenter._get_loader_segmentation_data(original_loader, partner_loader)
@@ -216,10 +219,10 @@ def run_autoregressive_generation_pipeline(target_npz_path, device_str, top_k, t
     # Downsampled sliding-window token decoding and continuous weight blending (Stage 1 reconstruction using stage 2 motion codes)
     native_chunk_frames = segmenter.pose_length
     native_stride = segmenter.stride
+    native_pre_frames = native_chunk_frames - native_stride
     
     token_chunk_frames = native_chunk_frames // downsample_factor
     token_stride = native_stride // downsample_factor
-    token_pre_frames = token_chunk_frames - token_stride
     
     num_chunks = math.floor((total_token_frames - token_chunk_frames) / token_stride) + 1
     valid_token_frames = (num_chunks - 1) * token_stride + token_chunk_frames
@@ -247,7 +250,6 @@ def run_autoregressive_generation_pipeline(target_npz_path, device_str, top_k, t
         decoded_pose_6d = stage1_model.decode(chunk_tokens)
         decoded_pose_6d = decoded_pose_6d.reshape(batch_size, native_chunk_frames, full_body_joint_count, 6)
         
-        native_pre_frames = native_chunk_frames - native_stride
         if i > 0 and latent_last is not None:
             decoded_pose_6d[:, :native_pre_frames, :, :] = latent_last[:, -native_pre_frames:, :, :]
             
@@ -299,7 +301,7 @@ def render_stage2_generation_tab(device):
             
         gr.Markdown("### 3. Select Target Conversation Interaction File")
         with gr.Row():
-            target_npz_file = create_file_browser("Target .NPZ Sequence File Path", extensions=[".npz"], file_count="single")
+            target_npz_file = create_file_browser("Target .NPZ Sequence File Path", extensions=[".npz"], file_count="single", default_value="data/seamless/downloads/stage_2_data_imitator/naturalistic/train/0002/0001/V00_S0124_I00000384_P0183.npz")
             generate_gesture_btn = gr.Button("Generate Gestures from Audio Context", variant="primary")
             
         output_video_component = gr.Video(label="Front View Evaluation: Ground Truth (Left) | Generated from Audio (Right)")
