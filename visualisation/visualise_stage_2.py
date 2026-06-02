@@ -33,8 +33,6 @@ def load_stage2_and_stage1_pipeline(stage2_config_path, stage2_checkpoint_path, 
     """
     device = torch.device(device_str)
     try:
-        print("-------HERE----------")
-        print(stage2_config_path, stage2_checkpoint_path, segmenter_config_path)
         with open(stage2_config_path, 'r') as f:
             config_dict = json.load(f)
             
@@ -48,7 +46,6 @@ def load_stage2_and_stage1_pipeline(stage2_config_path, stage2_checkpoint_path, 
             args.stage_1_pretrain.config_path,
             device
         )
-        print("-------HEREe----------")
         
         # Load stage 2
         stage2_model = TurnTakingTransformer(
@@ -61,11 +58,8 @@ def load_stage2_and_stage1_pipeline(stage2_config_path, stage2_checkpoint_path, 
             max_seq_len=args.model_params.max_seq_len,
             activation=args.model_params.activation
         ).to(device)
-
-        print("-------HEREeeee----------")
         
         stage2_model.load_state_dict(torch.load(stage2_checkpoint_path, map_location=device))
-        print("-------HEEEEERE----------")
         stage2_model.eval()
         
         # Additional cache info
@@ -74,8 +68,6 @@ def load_stage2_and_stage1_pipeline(stage2_config_path, stage2_checkpoint_path, 
         _stage2_runtime_cache["max_seq_len"] = args.model_params.max_seq_len
         _stage2_runtime_cache["code_dim"] = m_s1["code_dim"]
         _stage2_runtime_cache["downsample_factor"] = m_s1.get("downsample_factor", 4)
-
-        print("-------HEERERERE----------")
         
         # Initialise segmenter using the explicitly supplied configuration parameters
         if _stage2_runtime_cache["segmenter"] is None:
@@ -91,7 +83,6 @@ def load_stage2_and_stage1_pipeline(stage2_config_path, stage2_checkpoint_path, 
             seg_config["filter_out_of_screen_hands"] = False
             
             segmenter = SeamlessSegmenter(dataset=None, **seg_config)
-            print("-------HEREYUYYY----------")
             segmenter.bert_model = segmenter.bert_model.to(device)
             segmenter.hubert_model = segmenter.hubert_model.to(device)
             _stage2_runtime_cache["segmenter"] = segmenter

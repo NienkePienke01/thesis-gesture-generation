@@ -57,11 +57,14 @@ class SeamlessSegmenter:
                  filter_out_of_screen_hands=False, keep_only_high_intensity_blocks=False, vad_padding_in_seconds=0, worker_id=-1,
                  project_name="unknown", keep_listener_backchannel=False, include_stage_2_partner_data=False, 
                  relationship_detail_mandatory=False, personality_detail_mandatory=False, single_worker_mode=False):
+
         self.dataset = dataset
+        dataset_name = getattr(dataset, 'name', 'unknown_dataset')
         if worker_id == -1:
-            self.output_path = cache_dir / project_name / f"{self.dataset.name}"
+            self.output_path = cache_dir / project_name / f"{dataset_name}"
         else:
-            self.output_path = cache_dir / project_name / f"{self.dataset.name}" / f"part_{worker_id}"
+            self.output_path = cache_dir / project_name / f"{dataset_name}" / f"part_{worker_id}"
+
         self.pose_fps = pose_fps
         self.audio_sr = audio_sr
         self.pose_length = pose_length
