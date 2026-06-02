@@ -17,6 +17,7 @@ from data_processing.seamless_segmenter import relationship_detail_map
 from visualisation.file_browser import create_file_browser
 
 os.environ['PYOPENGL_PLATFORM'] = 'egl'
+os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 
 _stage2_runtime_cache = {
     "stage1_model": None,
@@ -213,9 +214,45 @@ def run_autoregressive_generation_pipeline(target_npz_path, device_str, top_k, t
             sampled_id = sample_top_p_k(logits_layer, top_k=top_k, top_p=top_p, temperature=temperature)
             generated_tokens[0, t, layer_idx] = sampled_id.squeeze(-1)
 
+    # ==================== This is to debug, and see if stage 2 is performing properly or not ====================
+    print("\n" + "="*50)
+    print("      STAGE 2 QUANTIZATION TOKEN EVALUATION")
+    print("="*50)
+    try:
+        # Extract and convert GT poses to 6D coordinates
+        full_pose_sequence = original_loader.get_trainable_pose().to(device)
+        batch_size_gt = 1
+        frames_gt = full_pose_sequence.shape[0]
+        gt_pose_matrix = rc.axis_angle_to_matrix(full_pose_sequence.reshape(batch_size_gt, frames_gt, 43, 3))
+        gt_pose_6d = rc.matrix_to_rotation_6d(gt_pose_matrix).reshape(batch_size_gt, frames_gt, 258)
+        
+        # Get ground truth codebook indices through Stage 1 encoder
+        gt_tokens = stage1_model.encode(gt_pose_6d)  # Shape: [1, total_token_frames, 4]
+        
+        # Truncate to matching shapes if mismatched by boundary steps
+        min_frames = min(generated_tokens.shape[1], gt_tokens.shape[1])
+        gen_eval = generated_tokens[0, :min_frames]
+        gt_eval = gt_tokens[0, :min_frames]
+        
+        # Compute exact token matches across each of the 4 residual codebook depths
+        print(f"Evaluating over {min_frames} token frames (downsampled from {frames_gt} native frames):")
+        for layer_idx in range(4):
+            layer_matches = (gen_eval[:, layer_idx] == gt_eval[:, layer_idx]).sum().item()
+            layer_acc = (layer_matches / min_frames) * 100.0
+            print(f"  -> Codebook Depth {layer_idx + 1} Exact Match Accuracy: {layer_acc:.2f}% ({layer_matches}/{min_frames})")
+            
+        # Overall strict frame hit rate (all 4 codebooks matching perfectly in a frame)
+        strict_matches = (gen_eval == gt_eval).all(dim=-1).sum().item()
+        strict_acc = (strict_matches / min_frames) * 100.0
+        print(f"  -> Absolute Sequence Frame Hit Rate (Strict Match): {strict_acc:.2f}%")
+    except Exception as eval_error:
+        print(f"  [Diagnostics Error]: Could not compute token metrics - {str(eval_error)}")
+    print("="*50 + "\n")
+    # =============================================================================
+
     progress(0.6, desc="Decoding token tracks via Stage 1 windowed chunks...")
     
-    # Downsampled sliding-window token decoding and continuous weight blending (Stage 1 reconstruction using stage 2 motion codes)
+    # Downsampled sliding-window token decoding and continuous weight blending
     native_chunk_frames = segmenter.pose_length
     native_stride = segmenter.stride
     native_pre_frames = native_chunk_frames - native_stride
@@ -267,9 +304,9 @@ def run_autoregressive_generation_pipeline(target_npz_path, device_str, top_k, t
         weight_mask[:, start_native_frame:end_native_frame] += chunk_weight[:, :, :1, :1]
     
     final_reconstructed_6d = final_reconstructed_6d / (weight_mask + 1e-8)
-    reconstructed_6d = final_reconstructed_6d # [1, num_frames, 43, 6]
+    reconstructed_6d = final_reconstructed_6d
     reconstructed_matrix = rc.rotation_6d_to_matrix(reconstructed_6d)
-    final_reconstructed_pose = rc.matrix_to_axis_angle(reconstructed_matrix).reshape(batch_size * native_valid_frames, -1) # [frames, channels]
+    final_reconstructed_pose = rc.matrix_to_axis_angle(reconstructed_matrix).reshape(batch_size * native_valid_frames, -1)
     
     # Overwrite the loader with predicted results
     reconstructed_loader = utils.SeamlessSMPLHLoader(target_npz_path, device=device, with_meta_data=False, load_vertices=False)
