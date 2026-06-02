@@ -102,7 +102,7 @@ class SeamlessStage2Trainer:
         # Targets shifted forward by +1 frame step
         target_tokens = gt_tokens[:, 1:, :]
         target_states = vad_integers[:, 1:]
-        
+
         # Forward pass -> pred_logits layout matches (B, T-1, 4, vocab_size)
         pred_logits, pred_state_logits = self.model(
             past_motion_codes=past_motion_input,

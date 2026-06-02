@@ -114,17 +114,17 @@ def sample_top_p_k(logits, top_k=50, top_p=0.9, temperature=1.0):
     return torch.multinomial(probs, num_samples=1)
 
 @torch.no_grad()
-def run_autoregressive_generation_pipeline(target_npz_path, device_str, top_k, top_p, temperature, progress=gr.Progress()):
+def generate_stage2_tokens(target_npz_path, device_str, top_k, top_p, temperature, progress=gr.Progress()):
     """
-    generates discrete gesture codebook codes frame-by-frame,
-    then uses Stage 1 to decode them back into smpl-h motion.
+    Processes multimodal input features and autoregressively generates discrete 
+    gesture codebook tokens frame-by-frame using the Stage 2 model.
     """
     stage2_model = _stage2_runtime_cache["stage2_model"]
     stage1_model = _stage2_runtime_cache["stage1_model"]
     segmenter = _stage2_runtime_cache["segmenter"]
     
     if stage2_model is None or stage1_model is None or segmenter is None:
-        return None, "Status: Please initialize the models first using step 1."
+        raise ValueError("Please initialize the models first using step 1.")
 
     device = torch.device(device_str)
     progress(0.1, desc="Extracting features using SeamlessSegmenter...")
@@ -133,7 +133,6 @@ def run_autoregressive_generation_pipeline(target_npz_path, device_str, top_k, t
     original_loader = utils.SeamlessSMPLHLoader(target_npz_path, device=device, with_meta_data=True, load_vertices=True)
     partner_loader = None
     if original_loader.meta_data and original_loader.meta_data.partner_full_id:
-        # Recursively look for the partner file
         search_root = Path(target_npz_path).parents[2]
         disk_map = {path.stem: str(path.absolute()) for path in search_root.rglob("*.npz")}
         
@@ -141,16 +140,14 @@ def run_autoregressive_generation_pipeline(target_npz_path, device_str, top_k, t
         if partner_path:
             partner_loader = utils.SeamlessSMPLHLoader(partner_path, device=device, with_meta_data=True, load_vertices=False)
 
-    # use the segmenter for processed data
     segment_data = segmenter._get_loader_segmentation_data(original_loader, partner_loader)
 
-    # reformat arrays
+    # Reformat arrays
     agent_audio_features = torch.from_numpy(segment_data.aligned_audio).unsqueeze(0).to(device).float()
     bert_text_features = torch.from_numpy(np.array([word_info["embedding"] for word_info in segment_data.aligned_words])).unsqueeze(0).to(device).float()
     conversation_states = torch.from_numpy(segment_data.aligned_conversation_states).unsqueeze(0).to(device)
     personality_traits = torch.from_numpy(segment_data.personality_vector).unsqueeze(0).to(device).float()
     
-    # Get partner audio
     if partner_loader is not None:
         partner_segment_data = segmenter._get_loader_segmentation_data(partner_loader, original_loader)
         partner_audio_features = torch.from_numpy(partner_segment_data.aligned_audio).unsqueeze(0).to(device).float()
@@ -158,7 +155,6 @@ def run_autoregressive_generation_pipeline(target_npz_path, device_str, top_k, t
         print("\nWARNING: PARTNER WAS NOT FOUND! USING ZERO DATA FOR PARTNER AUDIO\n")
         partner_audio_features = torch.zeros_like(agent_audio_features)
         
-    # Map the relationship status
     relationship_string = str(original_loader.meta_data.relationship_detail).lower().strip() if original_loader.meta_data.relationship_detail else "stranger"
     social_relationship = torch.tensor([relationship_detail_map.get(relationship_string, 0)], dtype=torch.long, device=device)
     
@@ -168,7 +164,7 @@ def run_autoregressive_generation_pipeline(target_npz_path, device_str, top_k, t
     else:
         emotion_categories = torch.full((1, original_loader.num_frames), 5, dtype=torch.long, device=device)
 
-    # downsample to fit token space
+    # Downsample to fit token space
     downsample_factor = _stage2_runtime_cache["downsample_factor"]
     agent_audio_downsampled = agent_audio_features[:, ::downsample_factor]
     partner_audio_downsampled = partner_audio_features[:, ::downsample_factor]
@@ -180,75 +176,68 @@ def run_autoregressive_generation_pipeline(target_npz_path, device_str, top_k, t
     max_sequence_length = _stage2_runtime_cache["max_seq_len"]
 
     # Extract global ground truth tokens for window extraction reference
-    full_pose_sequence = original_loader.get_trainable_pose().to(device)
+    target_pose = segment_data.aligned_pose
     batch_size_gt = 1
-    frames_gt = full_pose_sequence.shape[0]
-    gt_pose_matrix = rc.axis_angle_to_matrix(full_pose_sequence.reshape(batch_size_gt, frames_gt, 43, 3))
-    gt_pose_6d = rc.matrix_to_rotation_6d(gt_pose_matrix).reshape(batch_size_gt, frames_gt, 258)
-    gt_tokens = stage1_model.encode(gt_pose_6d)  # Shape: [1, total_token_frames, 4]
+    frames_gt = target_pose.shape[0]
+    target_pose_matrix = rc.axis_angle_to_matrix(target_pose.reshape(batch_size_gt, frames_gt, 43, 3))
+    gt_pose_6d = rc.matrix_to_rotation_6d(target_pose_matrix).reshape(batch_size_gt, frames_gt, 258)
+    
+    # Ground truth tokens extraction -> Shape: (B, T_down, 4)
+    gt_tokens = stage1_model.encode(gt_pose_6d)
     
     generated_tokens = torch.zeros((1, total_token_frames, 4), dtype=torch.long, device=device)
     
-    # Track evaluation metrics inside independent 64-frame windows
     total_eval_frames = 0
     match_counts = [0, 0, 0, 0]
     strict_hit_count = 0
     
-    # Split the long timeline into independent 64-frame chunks matching training constraints
-    for chunk_start in range(0, total_token_frames, max_sequence_length):
-        chunk_end = min(chunk_start + max_sequence_length, total_token_frames)
-        chunk_len = chunk_end - chunk_start
-        if chunk_len < 2:
-            continue
-            
-        # Seed only the very first frame of the chunk with ground truth
-        generated_tokens[:, chunk_start, :] = gt_tokens[:, chunk_start, :]
+    # Sliding window token generation loop
+    for t in range(1, total_token_frames):
+        if t % 20 == 0:
+            progress(0.1 + 0.5 * (t / total_token_frames), desc=f"Evaluating training match: Frame {t}/{total_token_frames}")
         
-        # Autoregressively generate the remainder of this specific 64-frame window
-        for t in range(chunk_start + 1, chunk_end):
-            if t % 20 == 0:
-                progress(0.1 + 0.5 * (t / total_token_frames), desc=f"Generating gesture tokens: Frame {t}/{total_token_frames}")
+        window_start = max(0, t - (max_sequence_length - 1))
+        
+        # teacher forcing like in train_step
+        past_motion_window = gt_tokens[:, window_start:t, :]
+        
+        conversation_states_window = conversation_states_downsampled[:, window_start:t]
+        emotion_categories_window = emotion_categories_downsampled[:, window_start:t]
+        agent_audio_window = agent_audio_downsampled[:, window_start:t]
+        partner_audio_window = partner_audio_downsampled[:, window_start:t]
+        bert_text_window = bert_text_downsampled[:, window_start:t]
+        
+        prediction_logits, _ = stage2_model(
+            past_motion_codes=past_motion_window,
+            vad_integers=conversation_states_window,
+            emotion_categories=emotion_categories_window,
+            social_relationship=social_relationship,
+            personality_traits=personality_traits,
+            audio_features=agent_audio_window,
+            partner_audio_features=partner_audio_window,
+            bert_features=bert_text_window
+        )
+        
+        next_frame_logits = prediction_logits[:, -1, :, :]
+        
+        for layer_idx in range(4):
+            logits_layer = next_frame_logits[0, layer_idx, :]
+            sampled_id = torch.argmax(logits_layer, dim=-1, keepdim=True)
+            # Store to calculate accuracy metrics
+            generated_tokens[0, t, layer_idx] = sampled_id.squeeze(-1)
             
-            # Keep lookback window locked locally to the start of this chunk
-            past_motion_window = generated_tokens[:, chunk_start:t, :]
-            conversation_states_window = conversation_states_downsampled[:, chunk_start:t]
-            emotion_categories_window = emotion_categories_downsampled[:, chunk_start:t]
-            agent_audio_window = agent_audio_downsampled[:, chunk_start:t]
-            partner_audio_window = partner_audio_downsampled[:, chunk_start:t]
-            bert_text_window = bert_text_downsampled[:, chunk_start:t]
-            
-            prediction_logits, _ = stage2_model(
-                past_motion_codes=past_motion_window,
-                vad_integers=conversation_states_window,
-                emotion_categories=emotion_categories_window,
-                social_relationship=social_relationship,
-                personality_traits=personality_traits,
-                audio_features=agent_audio_window,
-                partner_audio_features=partner_audio_window,
-                bert_features=bert_text_window
-            )
-            
-            next_frame_logits = prediction_logits[:, -1, :, :]
-            
-            for layer_idx in range(4):
-                logits_layer = next_frame_logits[0, layer_idx, :]
-                # sampled_id = sample_top_p_k(logits_layer, top_k=top_k, top_p=top_p, temperature=temperature)
-                # generated_tokens[0, t, layer_idx] = sampled_id.squeeze(-1)
-                sampled_id = torch.argmax(logits_layer, dim=-1, keepdim=True)
-                generated_tokens[0, t, layer_idx] = sampled_id.squeeze(-1)
-                
-            # Accumulate evaluation statistics frame by frame within this window
-            total_eval_frames += 1
-            is_strict_match = True
-            for layer_idx in range(4):
-                if generated_tokens[0, t, layer_idx] == gt_tokens[0, t, layer_idx]:
-                    match_counts[layer_idx] += 1
-                else:
-                    is_strict_match = False
-            if is_strict_match:
-                strict_hit_count += 1
+        # Evaluation accounting
+        total_eval_frames += 1
+        is_strict_match = True
+        for layer_idx in range(4):
+            if generated_tokens[0, t, layer_idx] == gt_tokens[0, t, layer_idx]:
+                match_counts[layer_idx] += 1
+            else:
+                is_strict_match = False
+        if is_strict_match:
+            strict_hit_count += 1
 
-    # ==================== CLEAN DIAGNOSTICS ENGINE ====================
+    # Model perfomance evaluation
     print("\n" + "="*50)
     print("      STAGE 2 64-FRAME SLIDING WINDOW EVALUATION")
     print("="*50)
@@ -258,11 +247,24 @@ def run_autoregressive_generation_pipeline(target_npz_path, device_str, top_k, t
         print(f"  -> Codebook Depth {layer_idx + 1} Match Accuracy: {layer_acc:.2f}% ({match_counts[layer_idx]}/{total_eval_frames})")
     print(f"  -> Absolute Sequence Frame Hit Rate (Strict Match): {(strict_hit_count / total_eval_frames) * 100.0:.2f}%")
     print("="*50 + "\n")
-    # =============================================================================
 
+    return generated_tokens, original_loader
+
+@torch.no_grad()
+def decode_stage1_motion(generated_tokens, original_loader, target_npz_path, device_str, progress=gr.Progress()):
+    """
+    Decodes discrete tokens back into continuous SMPL-H motion data using Stage 1,
+    then updates the loader asset and runs the comparison video renderer.
+    """
+    stage1_model = _stage2_runtime_cache["stage1_model"]
+    segmenter = _stage2_runtime_cache["segmenter"]
+    downsample_factor = _stage2_runtime_cache["downsample_factor"]
+    
+    device = torch.device(device_str)
+    total_token_frames = generated_tokens.shape[1]
+    
     progress(0.6, desc="Decoding token tracks via Stage 1 windowed chunks...")
     
-    # Downsampled sliding-window token decoding and continuous weight blending
     native_chunk_frames = segmenter.pose_length
     native_stride = segmenter.stride
     native_pre_frames = native_chunk_frames - native_stride
@@ -271,7 +273,6 @@ def run_autoregressive_generation_pipeline(target_npz_path, device_str, top_k, t
     token_stride = native_stride // downsample_factor
     
     num_chunks = math.floor((total_token_frames - token_chunk_frames) / token_stride) + 1
-    
     native_valid_frames = (num_chunks - 1) * native_stride + native_chunk_frames
     
     full_body_joint_count = 43
@@ -292,7 +293,6 @@ def run_autoregressive_generation_pipeline(target_npz_path, device_str, top_k, t
         end_token_frame = start_token_frame + token_chunk_frames
         chunk_tokens = generated_tokens[:, start_token_frame:end_token_frame, :]
         
-        # Decode chunk tokens into 6D rotations -> Shape: [1, 64, 258]
         decoded_pose_6d = stage1_model.decode(chunk_tokens)
         decoded_pose_6d = decoded_pose_6d.reshape(batch_size, native_chunk_frames, full_body_joint_count, 6)
         
@@ -314,11 +314,9 @@ def run_autoregressive_generation_pipeline(target_npz_path, device_str, top_k, t
         weight_mask[:, start_native_frame:end_native_frame] += chunk_weight[:, :, :1, :1]
     
     final_reconstructed_6d = final_reconstructed_6d / (weight_mask + 1e-8)
-    reconstructed_6d = final_reconstructed_6d
-    reconstructed_matrix = rc.rotation_6d_to_matrix(reconstructed_6d)
+    reconstructed_matrix = rc.rotation_6d_to_matrix(final_reconstructed_6d)
     final_reconstructed_pose = rc.matrix_to_axis_angle(reconstructed_matrix).reshape(batch_size * native_valid_frames, -1)
     
-    # Overwrite the loader with predicted results
     reconstructed_loader = utils.SeamlessSMPLHLoader(target_npz_path, device=device, with_meta_data=False, load_vertices=False)
     reconstructed_loader.overwrite_with_reconstructed_pose(final_reconstructed_pose)
     
@@ -326,6 +324,37 @@ def run_autoregressive_generation_pipeline(target_npz_path, device_str, top_k, t
     output_video_path = utils.generate_reconstruction_comparison_video(original_loader, reconstructed_loader, progress=progress, use_cache=False)
     
     return output_video_path, "Status: Generation and Rendering Complete!"
+
+@torch.no_grad()
+def run_autoregressive_generation_pipeline(target_npz_path, device_str, top_k, top_p, temperature, progress=gr.Progress()):
+    """
+    Unified orchestration pipeline that executes Stage 2 token generation 
+    followed immediately by Stage 1 motion decoding.
+    """
+    # Run Stage 2 Generate tokens from inputs
+    generated_tokens, original_loader = generate_stage2_tokens(
+        target_npz_path=target_npz_path,
+        device_str=device_str,
+        top_k=top_k,
+        top_p=top_p,
+        temperature=temperature,
+        progress=progress
+    )
+    
+    # Check if models were uninitialized and returned None
+    if generated_tokens is None:
+        return None, original_loader  # Contains the error status string
+
+    # Run Stage 1 Decode tokens into motion and render video
+    output_video_path, status_msg = decode_stage1_motion(
+        generated_tokens=generated_tokens,
+        original_loader=original_loader,
+        target_npz_path=target_npz_path,
+        device_str=device_str,
+        progress=progress
+    )
+    
+    return output_video_path, status_msg
 
 def render_stage2_generation_tab(device):
     with gr.TabItem("Stage 2: Audio Gesture Generation"):
