@@ -151,11 +151,10 @@ def run_autoregressive_generation_pipeline(target_npz_path, device_str, top_k, t
     
     # Get partner audio
     if partner_loader is not None:
-        print("\nPARTNER FOUND!\n")
         partner_segment_data = segmenter._get_loader_segmentation_data(partner_loader, original_loader)
         partner_audio_features = torch.from_numpy(partner_segment_data.aligned_audio).unsqueeze(0).to(device).float()
     else:
-        print("\nPARTNER NOTTT FOUND!\n")
+        print("\nWARNING: PARTNER WAS NOT FOUND! USING ZERO DATA FOR PARTNER AUDIO\n")
         partner_audio_features = torch.zeros_like(agent_audio_features)
         
     # Map the relationship status
@@ -225,14 +224,14 @@ def run_autoregressive_generation_pipeline(target_npz_path, device_str, top_k, t
     token_stride = native_stride // downsample_factor
     
     num_chunks = math.floor((total_token_frames - token_chunk_frames) / token_stride) + 1
-    valid_token_frames = (num_chunks - 1) * token_stride + token_chunk_frames
+    
     native_valid_frames = (num_chunks - 1) * native_stride + native_chunk_frames
     
     full_body_joint_count = 43
     batch_size = 1
     
-    final_reconstructed_6d = torch.zeros((batch_size, valid_token_frames, full_body_joint_count, 6), device=device)
-    weight_mask = torch.zeros((batch_size, valid_token_frames, 1, 1), device=device)
+    final_reconstructed_6d = torch.zeros((batch_size, native_valid_frames, full_body_joint_count, 6), device=device)
+    weight_mask = torch.zeros((batch_size, native_valid_frames, 1, 1), device=device)
     fade_in_native = torch.linspace(0.0, 1.0, steps=native_pre_frames, device=device).view(1, -1, 1, 1)
     fade_out_native = torch.linspace(1.0, 0.0, steps=native_pre_frames, device=device).view(1, -1, 1, 1)
     
