@@ -35,6 +35,9 @@ def main():
             with gr.TabItem("Stage 1 Reconstruction (Full Body)"):
                 render_full_body_reconstruction_tab(device)
             
+            with gr.TabItem("Stage 2 Visualisation (Full Body)"):
+                render_full_body_reconstruction_tab(device)
+            
             with gr.TabItem("LMDB visualisation data check"):
                 render_lmdb_visualiser_tab(device)
 
