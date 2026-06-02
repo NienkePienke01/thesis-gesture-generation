@@ -33,6 +33,7 @@ def load_stage2_and_stage1_pipeline(stage2_config_path, stage2_checkpoint_path, 
     """
     device = torch.device(device_str)
     try:
+        print(stage2_config_path, stage2_checkpoint_path, segmenter_config_path)
         with open(stage2_config_path, 'r') as f:
             config_dict = json.load(f)
             
