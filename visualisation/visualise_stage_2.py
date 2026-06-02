@@ -178,8 +178,21 @@ def run_autoregressive_generation_pipeline(target_npz_path, device_str, top_k, t
     
     total_token_frames = agent_audio_downsampled.shape[1]
     max_sequence_length = _stage2_runtime_cache["max_seq_len"]
+
+    #
+    # Extract and convert GT poses to 6D coordinates
+    full_pose_sequence = original_loader.get_trainable_pose().to(device)
+    batch_size_gt = 1
+    frames_gt = full_pose_sequence.shape[0]
+    gt_pose_matrix = rc.axis_angle_to_matrix(full_pose_sequence.reshape(batch_size_gt, frames_gt, 43, 3))
+    gt_pose_6d = rc.matrix_to_rotation_6d(gt_pose_matrix).reshape(batch_size_gt, frames_gt, 258)
+    
+    # Get ground truth codebook indices through Stage 1 encoder
+    gt_tokens = stage1_model.encode(gt_pose_6d)  # Shape: [1, total_token_frames, 4]
+    #
     
     generated_tokens = torch.zeros((1, total_token_frames, 4), dtype=torch.long, device=device)
+    generated_tokens[:, 0, :] = gt_tokens[:, 0, :]
     
     # Generate tokens autoregressively over the continuous timeline (Stage 2)
     for t in range(1, total_token_frames):
@@ -218,17 +231,7 @@ def run_autoregressive_generation_pipeline(target_npz_path, device_str, top_k, t
     print("\n" + "="*50)
     print("      STAGE 2 QUANTIZATION TOKEN EVALUATION")
     print("="*50)
-    try:
-        # Extract and convert GT poses to 6D coordinates
-        full_pose_sequence = original_loader.get_trainable_pose().to(device)
-        batch_size_gt = 1
-        frames_gt = full_pose_sequence.shape[0]
-        gt_pose_matrix = rc.axis_angle_to_matrix(full_pose_sequence.reshape(batch_size_gt, frames_gt, 43, 3))
-        gt_pose_6d = rc.matrix_to_rotation_6d(gt_pose_matrix).reshape(batch_size_gt, frames_gt, 258)
-        
-        # Get ground truth codebook indices through Stage 1 encoder
-        gt_tokens = stage1_model.encode(gt_pose_6d)  # Shape: [1, total_token_frames, 4]
-        
+    try:        
         # Truncate to matching shapes if mismatched by boundary steps
         min_frames = min(generated_tokens.shape[1], gt_tokens.shape[1])
         gen_eval = generated_tokens[0, :min_frames]
