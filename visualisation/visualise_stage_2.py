@@ -193,6 +193,9 @@ def run_autoregressive_generation_pipeline(target_npz_path, device_str, top_k, t
     
     generated_tokens = torch.zeros((1, total_token_frames, 4), dtype=torch.long, device=device)
     generated_tokens[:, 0, :] = gt_tokens[:, 0, :]
+
+    print(f"DEBUG SHAPE - Audio downsampled: {agent_audio_downsampled.shape}")
+    print(f"DEBUG SHAPE - GT Tokens: {gt_tokens.shape}")
     
     # Generate tokens autoregressively over the continuous timeline (Stage 2)
     for t in range(1, total_token_frames):
