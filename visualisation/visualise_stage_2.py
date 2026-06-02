@@ -179,77 +179,82 @@ def run_autoregressive_generation_pipeline(target_npz_path, device_str, top_k, t
     total_token_frames = agent_audio_downsampled.shape[1]
     max_sequence_length = _stage2_runtime_cache["max_seq_len"]
 
-    #
-    # Extract and convert GT poses to 6D coordinates
+    # Extract global ground truth tokens for window extraction reference
     full_pose_sequence = original_loader.get_trainable_pose().to(device)
     batch_size_gt = 1
     frames_gt = full_pose_sequence.shape[0]
     gt_pose_matrix = rc.axis_angle_to_matrix(full_pose_sequence.reshape(batch_size_gt, frames_gt, 43, 3))
     gt_pose_6d = rc.matrix_to_rotation_6d(gt_pose_matrix).reshape(batch_size_gt, frames_gt, 258)
-    
-    # Get ground truth codebook indices through Stage 1 encoder
     gt_tokens = stage1_model.encode(gt_pose_6d)  # Shape: [1, total_token_frames, 4]
-    #
     
     generated_tokens = torch.zeros((1, total_token_frames, 4), dtype=torch.long, device=device)
-    generated_tokens[:, 0, :] = gt_tokens[:, 0, :]
-
-    print(f"DEBUG SHAPE - Audio downsampled: {agent_audio_downsampled.shape}")
-    print(f"DEBUG SHAPE - GT Tokens: {gt_tokens.shape}")
     
-    # Generate tokens autoregressively over the continuous timeline (Stage 2)
-    for t in range(1, total_token_frames):
-        if t % 20 == 0:
-            progress(0.1 + 0.5 * (t / total_token_frames), desc=f"Generating gesture tokens: Frame {t}/{total_token_frames}")
-        
-        past_motion_window = generated_tokens[:, :t, :]
-        conversation_states_window = conversation_states_downsampled[:, :t]
-        emotion_categories_window = emotion_categories_downsampled[:, :t]
-        agent_audio_window = agent_audio_downsampled[:, :t]
-        partner_audio_window = partner_audio_downsampled[:, :t]
-        bert_text_window = bert_text_downsampled[:, :t]
-        
-        prediction_logits, _ = stage2_model(
-            past_motion_codes=past_motion_window,
-            vad_integers=conversation_states_window,
-            emotion_categories=emotion_categories_window,
-            social_relationship=social_relationship,
-            personality_traits=personality_traits,
-            audio_features=agent_audio_window,
-            partner_audio_features=partner_audio_window,
-            bert_features=bert_text_window
-        )
-        
-        next_frame_logits = prediction_logits[:, -1, :, :]
-        
-        for layer_idx in range(4):
-            logits_layer = next_frame_logits[0, layer_idx, :]
-            sampled_id = sample_top_p_k(logits_layer, top_k=top_k, top_p=top_p, temperature=temperature)
-            generated_tokens[0, t, layer_idx] = sampled_id.squeeze(-1)
-
-    # ==================== This is to debug, and see if stage 2 is performing properly or not ====================
-    print("\n" + "="*50)
-    print("      STAGE 2 QUANTIZATION TOKEN EVALUATION")
-    print("="*50)
-    try:        
-        # Truncate to matching shapes if mismatched by boundary steps
-        min_frames = min(generated_tokens.shape[1], gt_tokens.shape[1])
-        gen_eval = generated_tokens[0, :min_frames]
-        gt_eval = gt_tokens[0, :min_frames]
-        
-        # Compute exact token matches across each of the 4 residual codebook depths
-        print(f"Evaluating over {min_frames} token frames (downsampled from {frames_gt} native frames):")
-        for layer_idx in range(4):
-            layer_matches = (gen_eval[:, layer_idx] == gt_eval[:, layer_idx]).sum().item()
-            layer_acc = (layer_matches / min_frames) * 100.0
-            print(f"  -> Codebook Depth {layer_idx + 1} Exact Match Accuracy: {layer_acc:.2f}% ({layer_matches}/{min_frames})")
+    # Track evaluation metrics inside independent 64-frame windows
+    total_eval_frames = 0
+    match_counts = [0, 0, 0, 0]
+    strict_hit_count = 0
+    
+    # Split the long timeline into independent 64-frame chunks matching training constraints
+    for chunk_start in range(0, total_token_frames, max_sequence_length):
+        chunk_end = min(chunk_start + max_sequence_length, total_token_frames)
+        chunk_len = chunk_end - chunk_start
+        if chunk_len < 2:
+            continue
             
-        # Overall strict frame hit rate (all 4 codebooks matching perfectly in a frame)
-        strict_matches = (gen_eval == gt_eval).all(dim=-1).sum().item()
-        strict_acc = (strict_matches / min_frames) * 100.0
-        print(f"  -> Absolute Sequence Frame Hit Rate (Strict Match): {strict_acc:.2f}%")
-    except Exception as eval_error:
-        print(f"  [Diagnostics Error]: Could not compute token metrics - {str(eval_error)}")
+        # Seed only the very first frame of the chunk with ground truth
+        generated_tokens[:, chunk_start, :] = gt_tokens[:, chunk_start, :]
+        
+        # Autoregressively generate the remainder of this specific 64-frame window
+        for t in range(chunk_start + 1, chunk_end):
+            if t % 20 == 0:
+                progress(0.1 + 0.5 * (t / total_token_frames), desc=f"Generating gesture tokens: Frame {t}/{total_token_frames}")
+            
+            # Keep lookback window locked locally to the start of this chunk
+            past_motion_window = generated_tokens[:, chunk_start:t, :]
+            conversation_states_window = conversation_states_downsampled[:, chunk_start:t]
+            emotion_categories_window = emotion_categories_downsampled[:, chunk_start:t]
+            agent_audio_window = agent_audio_downsampled[:, chunk_start:t]
+            partner_audio_window = partner_audio_downsampled[:, chunk_start:t]
+            bert_text_window = bert_text_downsampled[:, chunk_start:t]
+            
+            prediction_logits, _ = stage2_model(
+                past_motion_codes=past_motion_window,
+                vad_integers=conversation_states_window,
+                emotion_categories=emotion_categories_window,
+                social_relationship=social_relationship,
+                personality_traits=personality_traits,
+                audio_features=agent_audio_window,
+                partner_audio_features=partner_audio_window,
+                bert_features=bert_text_window
+            )
+            
+            next_frame_logits = prediction_logits[:, -1, :, :]
+            
+            for layer_idx in range(4):
+                logits_layer = next_frame_logits[0, layer_idx, :]
+                sampled_id = sample_top_p_k(logits_layer, top_k=top_k, top_p=top_p, temperature=temperature)
+                generated_tokens[0, t, layer_idx] = sampled_id.squeeze(-1)
+                
+            # Accumulate evaluation statistics frame by frame within this window
+            total_eval_frames += 1
+            is_strict_match = True
+            for layer_idx in range(4):
+                if generated_tokens[0, t, layer_idx] == gt_tokens[0, t, layer_idx]:
+                    match_counts[layer_idx] += 1
+                else:
+                    is_strict_match = False
+            if is_strict_match:
+                strict_hit_count += 1
+
+    # ==================== CLEAN DIAGNOSTICS ENGINE ====================
+    print("\n" + "="*50)
+    print("      STAGE 2 64-FRAME SLIDING WINDOW EVALUATION")
+    print("="*50)
+    print(f"Evaluating across independent window segments ({total_eval_frames} total predicted steps):")
+    for layer_idx in range(4):
+        layer_acc = (match_counts[layer_idx] / total_eval_frames) * 100.0
+        print(f"  -> Codebook Depth {layer_idx + 1} Match Accuracy: {layer_acc:.2f}% ({match_counts[layer_idx]}/{total_eval_frames})")
+    print(f"  -> Absolute Sequence Frame Hit Rate (Strict Match): {(strict_hit_count / total_eval_frames) * 100.0:.2f}%")
     print("="*50 + "\n")
     # =============================================================================
 
