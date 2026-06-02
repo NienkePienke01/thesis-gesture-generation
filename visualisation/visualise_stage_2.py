@@ -33,6 +33,7 @@ def load_stage2_and_stage1_pipeline(stage2_config_path, stage2_checkpoint_path, 
     """
     device = torch.device(device_str)
     try:
+        print(stage2_config_path, stage2_checkpoint_path, segmenter_config_path)
         with open(stage2_config_path, 'r') as f:
             config_dict = json.load(f)
             
@@ -141,15 +142,15 @@ def run_autoregressive_generation_pipeline(target_npz_path, device_str, top_k, t
     segment_data = segmenter._get_loader_segmentation_data(original_loader, partner_loader)
 
     # reformat arrays
-    agent_audio_features = torch.from_numpy(segment_data.aligned_audio).unsqueeze(0).to(device)
-    bert_text_features = torch.from_numpy(np.array([word_info["embedding"] for word_info in segment_data.aligned_words])).unsqueeze(0).to(device)
+    agent_audio_features = torch.from_numpy(segment_data.aligned_audio).unsqueeze(0).to(device).float()
+    bert_text_features = torch.from_numpy(np.array([word_info["embedding"] for word_info in segment_data.aligned_words])).unsqueeze(0).to(device).float()
     conversation_states = torch.from_numpy(segment_data.aligned_conversation_states).unsqueeze(0).to(device)
-    personality_traits = torch.from_numpy(segment_data.personality_vector).unsqueeze(0).to(device)
+    personality_traits = torch.from_numpy(segment_data.personality_vector).unsqueeze(0).to(device).float()
     
     # Get partner audio
     if partner_loader is not None:
         partner_segment_data = segmenter._get_loader_segmentation_data(partner_loader, original_loader)
-        partner_audio_features = torch.from_numpy(partner_segment_data.aligned_audio).unsqueeze(0).to(device)
+        partner_audio_features = torch.from_numpy(partner_segment_data.aligned_audio).unsqueeze(0).to(device).float()
     else:
         partner_audio_features = torch.zeros_like(agent_audio_features)
         
@@ -276,9 +277,9 @@ def render_stage2_generation_tab(device):
     with gr.TabItem("Stage 2: Audio Gesture Generation"):
         gr.Markdown("### 1. Load System Framework (Stage 2 + Stage 1 Dependency)")
         with gr.Row():
-            stage2_config = create_file_browser("Stage 2 Config Path (.json)", extensions=[".json"], file_count="single")
-            stage2_checkpoint = create_file_browser("Stage 2 Checkpoint Path (.bin)", extensions=[".bin"], file_count="single")
-            segmenter_config = create_file_browser("Segmenter Config Path (.json)", extensions=[".json"], file_count="single")
+            stage2_config = create_file_browser("Stage 2 Config Path (.json)", extensions=[".json"], file_count="single", default_value="")
+            stage2_checkpoint = create_file_browser("Stage 2 Checkpoint Path (.bin)", extensions=[".bin"], file_count="single", default_value="")
+            segmenter_config = create_file_browser("Segmenter Config Path (.json)", extensions=[".json"], file_count="single", default_value="")
             
         load_pipeline_btn = gr.Button("Initialize Integrated Model Pipeline", variant="secondary")
         pipeline_status = gr.Markdown("Status: Waiting for initialization parameters...")

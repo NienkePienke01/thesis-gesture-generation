@@ -4,7 +4,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-def create_file_browser(label, extensions=[".npz"], file_count="single"):
+def create_file_browser(label, extensions=[".npz"], file_count="single", default_value=""):
     """
     Creates a remote file selector
     Returns the selector component
@@ -48,6 +48,7 @@ def create_file_browser(label, extensions=[".npz"], file_count="single"):
             refresh_btn = gr.Button("🔍 Scan for Files", scale=2, variant="primary")
 
         selector = gr.Dropdown(
+            value=default_value,
             choices=get_files(),
             label=None,
             show_label=False,
