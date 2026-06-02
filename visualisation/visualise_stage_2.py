@@ -180,7 +180,7 @@ def generate_stage2_tokens(target_npz_path, device_str, top_k, top_p, temperatur
     batch_size_gt = 1
     frames_gt = target_pose.shape[0]
     target_pose_matrix = rc.axis_angle_to_matrix(target_pose.reshape(batch_size_gt, frames_gt, 43, 3))
-    gt_pose_6d = rc.matrix_to_rotation_6d(target_pose_matrix).reshape(batch_size_gt, frames_gt, 258)
+    gt_pose_6d = rc.matrix_to_rotation_6d(target_pose_matrix).reshape(batch_size_gt, frames_gt, 258).to(device)
     
     # Ground truth tokens extraction -> Shape: (B, T_down, 4)
     gt_tokens = stage1_model.encode(gt_pose_6d)
