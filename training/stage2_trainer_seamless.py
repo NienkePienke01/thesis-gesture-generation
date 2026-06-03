@@ -152,10 +152,12 @@ class SeamlessStage2Trainer:
             bert_features=bert_input
         )
         
-        motion_loss = self.motion_loss_fn(
-            pred_logits.reshape(-1, pred_logits.size(-1)), 
-            target_tokens.reshape(-1)
-        )
+        motion_loss = 0.0
+        for i in range(L):
+            motion_loss += self.motion_loss_fn(
+                pred_logits[:, :, i, :].reshape(-1, pred_logits.size(-1)),
+                target_tokens[:, :, i].reshape(-1)
+            )
         state_loss = self.state_loss_fn(pred_state_logits.reshape(-1, pred_state_logits.size(-1)), target_states.reshape(-1))
         
         total_loss = (self.args.loss_weights.cross_entropy * motion_loss) + (self.args.loss_weights.conversation_state_weight * state_loss)
@@ -230,10 +232,12 @@ class SeamlessStage2Trainer:
             bert_features=bert_input
         )
         
-        motion_loss = self.motion_loss_fn(
-            pred_logits.reshape(-1, pred_logits.size(-1)), 
-            target_tokens.reshape(-1)
-        )
+        motion_loss = 0.0
+        for i in range(L):
+            motion_loss += self.motion_loss_fn(
+                pred_logits[:, :, i, :].reshape(-1, pred_logits.size(-1)),
+                target_tokens[:, :, i].reshape(-1)
+            )
         state_loss = self.state_loss_fn(pred_state_logits.reshape(-1, pred_state_logits.size(-1)), target_states.reshape(-1))
         
         total_loss = (self.args.loss_weights.cross_entropy * motion_loss) + (self.args.loss_weights.conversation_state_weight * state_loss)

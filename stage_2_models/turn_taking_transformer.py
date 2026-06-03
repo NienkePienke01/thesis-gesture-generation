@@ -65,7 +65,9 @@ class TurnTakingTransformer(nn.Module):
         self.transformer_decoder = nn.TransformerDecoder(decoder_layer, num_layers=num_layers)
         
         # Single code autoregressive head projection
-        self.final_head = nn.Linear(d_model, vocab_size) 
+        self.motion_heads = nn.ModuleList([
+            nn.Linear(d_model, vocab_size) for _ in range(downsample_factor)
+        ])
         self.state_head = nn.Linear(d_model, 3) 
 
     def _generate_causal_mask(self, size, device):
@@ -102,6 +104,6 @@ class TurnTakingTransformer(nn.Module):
             memory_mask=None
         )
         
-        pred_logits = self.final_head(fused_hidden) # (B, seq_len, vocab_size)
+        pred_logits = torch.stack([head(fused_hidden) for head in self.motion_heads], dim=2)
         state_logits = self.state_head(fused_hidden)
         return pred_logits, state_logits
