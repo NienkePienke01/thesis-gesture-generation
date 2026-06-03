@@ -87,7 +87,7 @@ def train_model(rank, gpu_amount_size, shared_port, args):
         # Metrics Logging & Checkpoint Management
         if rank == 0 and (epoch % args.log_period == 0 or epoch == args.training_params.epochs - 1):
             avg_train_total = epoch_losses["total"] / len(train_loader)
-            avg_val_total = val_losses["total"] / len(train_loader)
+            avg_val_total = val_losses["total"] / len(validation_loader)
 
             wandb.log({
                 "epoch": epoch,
@@ -95,8 +95,8 @@ def train_model(rank, gpu_amount_size, shared_port, args):
                 "train/motion_loss": epoch_losses["motion_loss"] / len(train_loader),
                 "train/state_loss": epoch_losses["state_loss"] / len(train_loader),
                 "val/total_loss": avg_val_total,
-                "val/motion_loss": val_losses.get("motion_loss", 0) / len(train_loader),
-                "val/state_loss": val_losses.get("state_loss", 0) / len(train_loader),
+                "val/motion_loss": val_losses.get("motion_loss", 0) / len(validation_loader),
+                "val/state_loss": val_losses.get("state_loss", 0) / len(validation_loader),
                 "lr": trainer.opt.param_groups[0]['lr']
             })
             print(f"Epoch {epoch} | Train Loss: {avg_train_total:.4f} | Val Loss: {avg_val_total:.4f}")
