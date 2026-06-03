@@ -35,9 +35,9 @@ class SeamlessStage2Trainer:
             self.device
         )
         self.stage_1_downsample_factor = m["downsample_factor"]
-        
+        self.code_dim = m["code_dim"]+1
         self.model = TurnTakingTransformer(
-            vocab_size=m["code_dim"]+1, # + 1 for masking
+            vocab_size=self.code_dim, # + 1 for masking
             d_model=args.model_params.d_model,
             nhead=args.model_params.nhead,
             num_layers=args.model_params.num_layers,
@@ -115,7 +115,7 @@ class SeamlessStage2Trainer:
         max_mask_prob = 0.40
         cosine_mask_prob = max_mask_prob * (0.5 * (1.0 - math.cos(math.pi * step_percentage)))
         
-        mask_token_id = self.args.model_params.code_dim # # Index code_dim is the 'MASK'
+        mask_token_id = self.code_dim # # Index code_dim is the 'MASK'
         token_mask_indices = torch.rand(past_motion_input.shape, device=self.device) < cosine_mask_prob
         past_motion_input[token_mask_indices] = mask_token_id
 
