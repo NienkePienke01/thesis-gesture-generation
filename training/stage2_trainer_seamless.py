@@ -44,8 +44,9 @@ class SeamlessStage2Trainer:
             num_layers=args.model_params.num_layers,
             dim_feedforward=args.model_params.dim_feedforward,
             dropout=args.model_params.dropout,
-            max_seq_len=args.model_params.max_seq_len * 4,
-            activation=args.model_params.activation
+            max_seq_len=args.model_params.max_seq_len * self.stage_1_downsample_factor,
+            activation=args.model_params.activation,
+            downsample_factor = self.stage_1_downsample_factor
         ).to(self.device)
 
         self.model = DDP(self.model, device_ids=[gpu_id])
