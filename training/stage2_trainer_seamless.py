@@ -138,7 +138,8 @@ class SeamlessStage2Trainer:
             else:
                 personality_traits = torch.zeros_like(personality_traits)
         
-        target_tokens = gt_tokens_flat[:, 1:]
+        target_tokens_flat = gt_tokens_flat[:, 1:]
+        target_tokens = target_tokens_flat.reshape(B, -1, L)
         target_states = vad_flat[:, 1:]
 
         pred_logits, pred_state_logits = self.model(
@@ -218,7 +219,8 @@ class SeamlessStage2Trainer:
         partner_audio_input = partner_audio_flat[:, :-1]
         bert_input = bert_flat[:, :-1]
         
-        target_tokens = gt_tokens_flat[:, 1:]
+        target_tokens_flat = gt_tokens_flat[:, 1:]
+        target_tokens = target_tokens_flat.reshape(B, -1, L)
         target_states = vad_flat[:, 1:]
         
         pred_logits, pred_state_logits = self.model(
