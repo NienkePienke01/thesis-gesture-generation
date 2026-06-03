@@ -36,17 +36,17 @@ class SeamlessStage2Trainer:
         )
         self.stage_1_downsample_factor = m["downsample_factor"]
         self.code_dim = m["code_dim"]
-        self.vocab_size = m["code_dim"]+1
+        self.vocab_size = m["code_dim"] + 1
         self.model = TurnTakingTransformer(
-            vocab_size=self.vocab_size, # + 1 for masking
+            vocab_size=self.vocab_size,
             d_model=args.model_params.d_model,
             nhead=args.model_params.nhead,
             num_layers=args.model_params.num_layers,
             dim_feedforward=args.model_params.dim_feedforward,
             dropout=args.model_params.dropout,
-            max_seq_len=args.model_params.max_seq_len * self.stage_1_downsample_factor,
+            max_seq_len=args.model_params.max_seq_len,
             activation=args.model_params.activation,
-            downsample_factor = self.stage_1_downsample_factor
+            downsample_factor=self.stage_1_downsample_factor
         ).to(self.device)
 
         self.model = DDP(self.model, device_ids=[gpu_id])
@@ -82,53 +82,38 @@ class SeamlessStage2Trainer:
         target_pose_matrix = rc.axis_angle_to_matrix(target_pose.reshape(batch_size, frames, 43, 3))
         target_pose_6d = rc.matrix_to_rotation_6d(target_pose_matrix).reshape(batch_size, frames, 258)
         
+        # gt_tokens shape from Stage 1 VQ-VAE: (B, T, L)
         gt_tokens = self._extract_stage1_tokens(target_pose_6d)
         max_history = self.args.model_params.max_history_frames
         gt_tokens = gt_tokens[:, -max_history:]
         B, T, L = gt_tokens.shape
-        gt_tokens_flat = gt_tokens.reshape(B, T * L)
         
-        vad_integers = dict_data["conversation_states"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
-        emotions = dict_data["emotions"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
-        bert_features = dict_data["bert"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
+        # Slice frame-level context parameters down to frame length T
+        vad_sliced = dict_data["conversation_states"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor][:, :T]
+        emotion_sliced = dict_data["emotions"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor][:, :T]
+        bert_sliced = dict_data["bert"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor][:, :T]
+        audio_sliced = dict_data["audio"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor][:, :T]
+        partner_audio_sliced = dict_data["partner_audio"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor][:, :T]
         
         social_relationship = dict_data["social_relationship"].to(self.device, non_blocking=True)
         personality_traits = dict_data["personality_traits"].to(self.device, non_blocking=True)
         
-        audio_features = dict_data["audio"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
-        partner_audio_features = dict_data["partner_audio"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
-        
-        # Slice frame-level context parameters up to the current downsampled frame length T, to make sure we do not train on the future
-        audio_sliced = audio_features[:, :T]
-        partner_audio_sliced = partner_audio_features[:, :T]
-        bert_sliced = bert_features[:, :T]
-        vad_sliced = vad_integers[:, :T]
-        emotion_sliced = emotions[:, :T]
+        # Autoregressive shifting along the frame dimension (T-1)
+        past_motion_input = gt_tokens[:, :-1, :].clone()
+        vad_input = vad_sliced[:, :-1].clone()
+        emotion_input = emotion_sliced[:, :-1].clone()
+        audio_input = audio_sliced[:, :-1]
+        partner_audio_input = partner_audio_sliced[:, :-1]
+        bert_input = bert_sliced[:, :-1]
 
-        # Interleave frame-level parameters to match token dimension lengths
-        audio_flat = audio_sliced.repeat_interleave(L, dim=1)
-        partner_audio_flat = partner_audio_sliced.repeat_interleave(L, dim=1)
-        bert_flat = bert_sliced.repeat_interleave(L, dim=1)
-        vad_flat = vad_sliced.repeat_interleave(L, dim=1)
-        emotion_flat = emotion_sliced.repeat_interleave(L, dim=1)
-        
-        past_motion_input = gt_tokens_flat[:, :-L].clone()
-        vad_input = vad_flat[:, :-L].clone()
-        emotion_input = emotion_flat[:, :-L].clone()
-
-        audio_input = audio_flat[:, :-L]
-        partner_audio_input = partner_audio_flat[:, :-L]
-        bert_input = bert_flat[:, :-L]
-
-        # UGM MASKING based on liveges
+        # UGM Masking applied cleanly across frame indices
         max_mask_prob = 0.40
         cosine_mask_prob = max_mask_prob * (0.5 * (1.0 - math.cos(math.pi * step_percentage)))
-        
-        mask_token_id = self.code_dim # # Index code_dim is the 'MASK'
+        mask_token_id = self.code_dim
         token_mask_indices = torch.rand(past_motion_input.shape, device=self.device) < cosine_mask_prob
         past_motion_input[token_mask_indices] = mask_token_id
 
-        # RM MASKING based on liveges
+        # RM Masking
         if torch.rand(1).item() < 0.15:
             rand_val = torch.rand(1).item()
             if rand_val < 0.33:
@@ -138,9 +123,11 @@ class SeamlessStage2Trainer:
             else:
                 personality_traits = torch.zeros_like(personality_traits)
         
+        # Targets represent the next time step offset
         target_tokens = gt_tokens[:, 1:, :]
-        target_states = vad_flat[:, L:]
+        target_states = vad_sliced[:, 1:]
 
+        # Model takes and evaluates frame sequence elements directly
         pred_logits, pred_state_logits = self.model(
             past_motion_codes=past_motion_input,
             vad_integers=vad_input,
@@ -152,10 +139,11 @@ class SeamlessStage2Trainer:
             bert_features=bert_input
         )
         
+        # Compute hierarchical loss across all code heads independently
         motion_loss = 0.0
         for i in range(L):
             motion_loss += self.motion_loss_fn(
-                pred_logits[:, :, i, :].reshape(-1, pred_logits.size(-1)),
+                pred_logits[:, :, i, :].reshape(-1, pred_logits.size('-1')),
                 target_tokens[:, :, i].reshape(-1)
             )
         state_loss = self.state_loss_fn(pred_state_logits.reshape(-1, pred_state_logits.size(-1)), target_states.reshape(-1))
@@ -185,41 +173,25 @@ class SeamlessStage2Trainer:
         max_history = self.args.model_params.max_history_frames
         gt_tokens = gt_tokens[:, -max_history:]
         B, T, L = gt_tokens.shape
-        gt_tokens_flat = gt_tokens.reshape(B, T * L)
         
-        vad_integers = dict_data["conversation_states"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
-        emotions = dict_data["emotions"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
-        bert_features = dict_data["bert"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
+        vad_integers = dict_data["conversation_states"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor][:, :T]
+        emotions = dict_data["emotions"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor][:, :T]
+        bert_features = dict_data["bert"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor][:, :T]
+        audio_features = dict_data["audio"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor][:, :T]
+        partner_audio_features = dict_data["partner_audio"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor][:, :T]
         
         social_relationship = dict_data["social_relationship"].to(self.device, non_blocking=True)
         personality_traits = dict_data["personality_traits"].to(self.device, non_blocking=True)
         
-        audio_features = dict_data["audio"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
-        partner_audio_features = dict_data["partner_audio"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
-        
-        audio_sliced = audio_features[:, :T]
-        partner_audio_sliced = partner_audio_features[:, :T]
-        bert_sliced = bert_features[:, :T]
-        vad_sliced = vad_integers[:, :T]
-        emotion_sliced = emotions[:, :T]
-
-        # Interleave frame-level parameters to match token dimension lengths
-        audio_flat = audio_sliced.repeat_interleave(L, dim=1)
-        partner_audio_flat = partner_audio_sliced.repeat_interleave(L, dim=1)
-        bert_flat = bert_sliced.repeat_interleave(L, dim=1)
-        vad_flat = vad_sliced.repeat_interleave(L, dim=1)
-        emotion_flat = emotion_sliced.repeat_interleave(L, dim=1)
-        
-        past_motion_input = gt_tokens_flat[:, :-L].clone()
-        vad_input = vad_flat[:, :-L].clone()
-        emotion_input = emotion_flat[:, :-L].clone()
-
-        audio_input = audio_flat[:, :-L]
-        partner_audio_input = partner_audio_flat[:, :-L]
-        bert_input = bert_flat[:, :-L]
+        past_motion_input = gt_tokens[:, :-1, :].clone()
+        vad_input = vad_integers[:, :-1].clone()
+        emotion_input = emotions[:, :-1].clone()
+        audio_input = audio_features[:, :-1]
+        partner_audio_input = partner_audio_features[:, :-1]
+        bert_input = bert_features[:, :-1]
         
         target_tokens = gt_tokens[:, 1:, :]
-        target_states = vad_flat[:, L:]
+        target_states = vad_integers[:, 1:]
         
         pred_logits, pred_state_logits = self.model(
             past_motion_codes=past_motion_input,
