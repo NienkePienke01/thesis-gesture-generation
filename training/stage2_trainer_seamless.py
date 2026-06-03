@@ -35,9 +35,10 @@ class SeamlessStage2Trainer:
             self.device
         )
         self.stage_1_downsample_factor = m["downsample_factor"]
-        self.code_dim = m["code_dim"]+1
+        self.code_dim = m["code_dim"]
+        self.vocab_size = m["code_dim"]+1
         self.model = TurnTakingTransformer(
-            vocab_size=self.code_dim, # + 1 for masking
+            vocab_size=self.vocab_size, # + 1 for masking
             d_model=args.model_params.d_model,
             nhead=args.model_params.nhead,
             num_layers=args.model_params.num_layers,
