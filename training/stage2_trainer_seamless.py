@@ -112,13 +112,13 @@ class SeamlessStage2Trainer:
         vad_flat = vad_sliced.repeat_interleave(L, dim=1)
         emotion_flat = emotion_sliced.repeat_interleave(L, dim=1)
         
-        past_motion_input = gt_tokens_flat[:, :-1].clone()
-        vad_input = vad_flat[:, :-1].clone()
-        emotion_input = emotion_flat[:, :-1].clone()
-        
-        audio_input = audio_flat[:, :-1]
-        partner_audio_input = partner_audio_flat[:, :-1]
-        bert_input = bert_flat[:, :-1]
+        past_motion_input = gt_tokens_flat[:, :-L].clone()
+        vad_input = vad_flat[:, :-L].clone()
+        emotion_input = emotion_flat[:, :-L].clone()
+
+        audio_input = audio_flat[:, :-L]
+        partner_audio_input = partner_audio_flat[:, :-L]
+        bert_input = bert_flat[:, :-L]
 
         # UGM MASKING based on liveges
         max_mask_prob = 0.40
@@ -138,9 +138,8 @@ class SeamlessStage2Trainer:
             else:
                 personality_traits = torch.zeros_like(personality_traits)
         
-        target_tokens_flat = gt_tokens_flat[:, 1:]
-        target_tokens = target_tokens_flat.reshape(B, -1, L)
-        target_states = vad_flat[:, 1:]
+        target_tokens = gt_tokens[:, 1:, :]
+        target_states = vad_flat[:, L:]
 
         pred_logits, pred_state_logits = self.model(
             past_motion_codes=past_motion_input,
@@ -211,17 +210,16 @@ class SeamlessStage2Trainer:
         vad_flat = vad_sliced.repeat_interleave(L, dim=1)
         emotion_flat = emotion_sliced.repeat_interleave(L, dim=1)
         
-        past_motion_input = gt_tokens_flat[:, :-1]
-        vad_input = vad_flat[:, :-1]
-        emotion_input = emotion_flat[:, :-1]
+        past_motion_input = gt_tokens_flat[:, :-L].clone()
+        vad_input = vad_flat[:, :-L].clone()
+        emotion_input = emotion_flat[:, :-L].clone()
+
+        audio_input = audio_flat[:, :-L]
+        partner_audio_input = partner_audio_flat[:, :-L]
+        bert_input = bert_flat[:, :-L]
         
-        audio_input = audio_flat[:, :-1]
-        partner_audio_input = partner_audio_flat[:, :-1]
-        bert_input = bert_flat[:, :-1]
-        
-        target_tokens_flat = gt_tokens_flat[:, 1:]
-        target_tokens = target_tokens_flat.reshape(B, -1, L)
-        target_states = vad_flat[:, 1:]
+        target_tokens = gt_tokens[:, 1:, :]
+        target_states = vad_flat[:, L:]
         
         pred_logits, pred_state_logits = self.model(
             past_motion_codes=past_motion_input,
