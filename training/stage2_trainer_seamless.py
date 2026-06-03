@@ -97,12 +97,19 @@ class SeamlessStage2Trainer:
         audio_features = dict_data["audio"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
         partner_audio_features = dict_data["partner_audio"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
         
+        # Slice frame-level context parameters up to the current downsampled frame length T, to make sure we do not train on the future
+        audio_sliced = audio_features[:, :T]
+        partner_audio_sliced = partner_audio_features[:, :T]
+        bert_sliced = bert_features[:, :T]
+        vad_sliced = vad_integers[:, :T]
+        emotion_sliced = emotions[:, :T]
+
         # Interleave frame-level parameters to match token dimension lengths
-        vad_flat = vad_integers.repeat_interleave(L, dim=1)
-        emotion_flat = emotions.repeat_interleave(L, dim=1)
-        bert_flat = bert_features.repeat_interleave(L, dim=1)
-        audio_flat = audio_features.repeat_interleave(L, dim=1)
-        partner_audio_flat = partner_audio_features.repeat_interleave(L, dim=1)
+        audio_flat = audio_sliced.repeat_interleave(L, dim=1)
+        partner_audio_flat = partner_audio_sliced.repeat_interleave(L, dim=1)
+        bert_flat = bert_sliced.repeat_interleave(L, dim=1)
+        vad_flat = vad_sliced.repeat_interleave(L, dim=1)
+        emotion_flat = emotion_sliced.repeat_interleave(L, dim=1)
         
         past_motion_input = gt_tokens_flat[:, :-1].clone()
         vad_input = vad_flat[:, :-1].clone()
@@ -187,11 +194,18 @@ class SeamlessStage2Trainer:
         audio_features = dict_data["audio"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
         partner_audio_features = dict_data["partner_audio"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
         
-        vad_flat = vad_integers.repeat_interleave(L, dim=1)
-        emotion_flat = emotions.repeat_interleave(L, dim=1)
-        bert_flat = bert_features.repeat_interleave(L, dim=1)
-        audio_flat = audio_features.repeat_interleave(L, dim=1)
-        partner_audio_flat = partner_audio_features.repeat_interleave(L, dim=1)
+        audio_sliced = audio_features[:, :T]
+        partner_audio_sliced = partner_audio_features[:, :T]
+        bert_sliced = bert_features[:, :T]
+        vad_sliced = vad_integers[:, :T]
+        emotion_sliced = emotions[:, :T]
+
+        # Interleave frame-level parameters to match token dimension lengths
+        audio_flat = audio_sliced.repeat_interleave(L, dim=1)
+        partner_audio_flat = partner_audio_sliced.repeat_interleave(L, dim=1)
+        bert_flat = bert_sliced.repeat_interleave(L, dim=1)
+        vad_flat = vad_sliced.repeat_interleave(L, dim=1)
+        emotion_flat = emotion_sliced.repeat_interleave(L, dim=1)
         
         past_motion_input = gt_tokens_flat[:, :-1]
         vad_input = vad_flat[:, :-1]

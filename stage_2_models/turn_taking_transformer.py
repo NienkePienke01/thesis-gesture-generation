@@ -50,8 +50,8 @@ class TurnTakingTransformer(nn.Module):
         self.final_head = nn.Linear(d_model, vocab_size) 
         self.state_head = nn.Linear(d_model, 3) 
 
-    def _generate_causal_mask(self, tgt_sz, mem_sz, device):
-        mask = torch.triu(torch.ones(tgt_sz, mem_sz, device=device), diagonal=1) == 1
+    def _generate_causal_mask(self, size, device):
+        mask = torch.triu(torch.ones(size, size, device=device), diagonal=1) == 1
         return mask.float().masked_fill(mask, float('-inf'))
 
     def forward(self, past_motion_codes, vad_integers, emotion_categories, social_relationship, 
@@ -73,15 +73,15 @@ class TurnTakingTransformer(nn.Module):
         part_aud_emb = self.partner_audio_proj(partner_audio_features)
         txt_emb = self.text_proj(bert_features)
         
-        context_bank = aud_emb + part_aud_emb + txt_emb 
+        context_bank = torch.cat([aud_emb, part_aud_emb, txt_emb], dim=1)
         
-        tgt_mask = self._generate_causal_mask(seq_len, seq_len, past_motion_codes.device)
+        tgt_mask = self._generate_causal_mask(seq_len, past_motion_codes.device)
         
         fused_hidden = self.transformer_decoder(
             tgt=main_sequence,
             memory=context_bank,
             tgt_mask=tgt_mask,
-            memory_mask=tgt_mask
+            memory_mask=None
         )
         
         pred_logits = self.final_head(fused_hidden) # (B, seq_len, vocab_size)
