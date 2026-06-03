@@ -43,7 +43,7 @@ class SeamlessStage2Trainer:
             num_layers=args.model_params.num_layers,
             dim_feedforward=args.model_params.dim_feedforward,
             dropout=args.model_params.dropout,
-            max_seq_len=args.model_params.max_seq_len,
+            max_seq_len=args.model_params.max_seq_len * 4,
             activation=args.model_params.activation
         ).to(self.device)
 
@@ -69,9 +69,7 @@ class SeamlessStage2Trainer:
 
     @torch.no_grad()
     def _extract_stage1_tokens(self, target_pose_6d):
-        # Keeps full native shape (batch_size, T_down, residual_depth)
         return self.stage1_model.encode(target_pose_6d)
-
 
     def train_step(self, dict_data, step_percentage):
         self.model.train()
@@ -83,6 +81,10 @@ class SeamlessStage2Trainer:
         target_pose_6d = rc.matrix_to_rotation_6d(target_pose_matrix).reshape(batch_size, frames, 258)
         
         gt_tokens = self._extract_stage1_tokens(target_pose_6d)
+        max_history = self.args.model_params.max_history_frames
+        gt_tokens = gt_tokens[:, -max_history:]
+        B, T, L = gt_tokens.shape
+        gt_tokens_flat = gt_tokens.reshape(B, T * L)
         
         vad_integers = dict_data["conversation_states"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
         emotions = dict_data["emotions"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
@@ -94,9 +96,20 @@ class SeamlessStage2Trainer:
         audio_features = dict_data["audio"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
         partner_audio_features = dict_data["partner_audio"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
         
-        past_motion_input = gt_tokens[:, :-1, :].clone()
-        vad_input = vad_integers[:, :-1].clone()
-        emotion_input = emotions[:, :-1].clone()
+        # Interleave frame-level parameters to match token dimension lengths
+        vad_flat = vad_integers.repeat_interleave(L, dim=1)
+        emotion_flat = emotions.repeat_interleave(L, dim=1)
+        bert_flat = bert_features.repeat_interleave(L, dim=1)
+        audio_flat = audio_features.repeat_interleave(L, dim=1)
+        partner_audio_flat = partner_audio_features.repeat_interleave(L, dim=1)
+        
+        past_motion_input = gt_tokens_flat[:, :-1].clone()
+        vad_input = vad_flat[:, :-1].clone()
+        emotion_input = emotion_flat[:, :-1].clone()
+        
+        audio_input = audio_flat[:, :-1]
+        partner_audio_input = partner_audio_flat[:, :-1]
+        bert_input = bert_flat[:, :-1]
 
         # UGM MASKING based on liveges
         max_mask_prob = 0.40
@@ -107,19 +120,17 @@ class SeamlessStage2Trainer:
         past_motion_input[token_mask_indices] = mask_token_id
 
         # RM MASKING based on liveges
-        # Randomly noises out secondary context channels 15% of the time 
         if torch.rand(1).item() < 0.15:
             rand_val = torch.rand(1).item()
             if rand_val < 0.33:
-                vad_input = torch.randint(0, 3, vad_input.shape, device=self.device) # randomise vad to make it harder for the model
+                vad_input = torch.randint(0, 3, vad_input.shape, device=self.device)
             elif rand_val < 0.66:
-                emotion_input = torch.full_like(emotion_input, 5) # default/neutral emotion index
+                emotion_input = torch.full_like(emotion_input, 5)
             else:
-                # Mask out the personality traits vector to break speaker ID memorization
                 personality_traits = torch.zeros_like(personality_traits)
         
-        target_tokens = gt_tokens[:, 1:, :]
-        target_states = vad_integers[:, 1:]
+        target_tokens = gt_tokens_flat[:, 1:]
+        target_states = vad_flat[:, 1:]
 
         pred_logits, pred_state_logits = self.model(
             past_motion_codes=past_motion_input,
@@ -127,22 +138,17 @@ class SeamlessStage2Trainer:
             emotion_categories=emotion_input,
             social_relationship=social_relationship,
             personality_traits=personality_traits,
-            audio_features=audio_features[:, :-1],
-            partner_audio_features=partner_audio_features[:, :-1],
-            bert_features=bert_features[:, :-1]
+            audio_features=audio_input,
+            partner_audio_features=partner_audio_input,
+            bert_features=bert_input
         )
         
-        motion_loss = 0
-        for i in range(4):
-            layer_pred = pred_logits[:, :, i, :]
-            layer_target = target_tokens[:, :, i]
-            motion_loss += self.motion_loss_fn(
-                layer_pred.reshape(-1, layer_pred.size(-1)), 
-                layer_target.reshape(-1)
-            )
-        motion_loss = motion_loss / 4
-        
+        motion_loss = self.motion_loss_fn(
+            pred_logits.reshape(-1, pred_logits.size(-1)), 
+            target_tokens.reshape(-1)
+        )
         state_loss = self.state_loss_fn(pred_state_logits.reshape(-1, pred_state_logits.size(-1)), target_states.reshape(-1))
+        
         total_loss = (self.args.loss_weights.cross_entropy * motion_loss) + (self.args.loss_weights.conversation_state_weight * state_loss)
                      
         total_loss.backward()
@@ -165,6 +171,10 @@ class SeamlessStage2Trainer:
         target_pose_6d = rc.matrix_to_rotation_6d(target_pose_matrix).reshape(batch_size, frames, 258)
         
         gt_tokens = self._extract_stage1_tokens(target_pose_6d)
+        max_history = self.args.model_params.max_history_frames
+        gt_tokens = gt_tokens[:, -max_history:]
+        B, T, L = gt_tokens.shape
+        gt_tokens_flat = gt_tokens.reshape(B, T * L)
         
         vad_integers = dict_data["conversation_states"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
         emotions = dict_data["emotions"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
@@ -176,12 +186,22 @@ class SeamlessStage2Trainer:
         audio_features = dict_data["audio"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
         partner_audio_features = dict_data["partner_audio"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
         
-        past_motion_input = gt_tokens[:, :-1, :]
-        vad_input = vad_integers[:, :-1]
-        emotion_input = emotions[:, :-1]
+        vad_flat = vad_integers.repeat_interleave(L, dim=1)
+        emotion_flat = emotions.repeat_interleave(L, dim=1)
+        bert_flat = bert_features.repeat_interleave(L, dim=1)
+        audio_flat = audio_features.repeat_interleave(L, dim=1)
+        partner_audio_flat = partner_audio_features.repeat_interleave(L, dim=1)
         
-        target_tokens = gt_tokens[:, 1:, :]
-        target_states = vad_integers[:, 1:]
+        past_motion_input = gt_tokens_flat[:, :-1]
+        vad_input = vad_flat[:, :-1]
+        emotion_input = emotion_flat[:, :-1]
+        
+        audio_input = audio_flat[:, :-1]
+        partner_audio_input = partner_audio_flat[:, :-1]
+        bert_input = bert_flat[:, :-1]
+        
+        target_tokens = gt_tokens_flat[:, 1:]
+        target_states = vad_flat[:, 1:]
         
         pred_logits, pred_state_logits = self.model(
             past_motion_codes=past_motion_input,
@@ -189,21 +209,15 @@ class SeamlessStage2Trainer:
             emotion_categories=emotion_input,
             social_relationship=social_relationship,
             personality_traits=personality_traits,
-            audio_features=audio_features[:, :-1],
-            partner_audio_features=partner_audio_features[:, :-1],
-            bert_features=bert_features[:, :-1]
+            audio_features=audio_input,
+            partner_audio_features=partner_audio_input,
+            bert_features=bert_input
         )
         
-        motion_loss = 0
-        for i in range(4):
-            layer_pred = pred_logits[:, :, i, :]
-            layer_target = target_tokens[:, :, i]
-            motion_loss += self.motion_loss_fn(
-                layer_pred.reshape(-1, layer_pred.size(-1)), 
-                layer_target.reshape(-1)
-            )
-        motion_loss = motion_loss / 4
-        
+        motion_loss = self.motion_loss_fn(
+            pred_logits.reshape(-1, pred_logits.size(-1)), 
+            target_tokens.reshape(-1)
+        )
         state_loss = self.state_loss_fn(pred_state_logits.reshape(-1, pred_state_logits.size(-1)), target_states.reshape(-1))
         
         total_loss = (self.args.loss_weights.cross_entropy * motion_loss) + (self.args.loss_weights.conversation_state_weight * state_loss)

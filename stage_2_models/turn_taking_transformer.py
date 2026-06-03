@@ -20,9 +20,9 @@ class PositionalEncoding(nn.Module):
 
 class TurnTakingTransformer(nn.Module):
     def __init__(self, vocab_size=1024, d_model=512, nhead=8, num_layers=6, dim_feedforward=2048, 
-                 dropout=0.1, max_seq_len=64, activation="gelu"):
+                 dropout=0.1, max_seq_len=256, activation="gelu"):
         super().__init__()
-        # Motion embedding layer used to process all 4 layers
+        # Motion embedding layer used to process flattened tokens autoregressively
         self.motion_embedding = nn.Embedding(vocab_size, d_model)
         self.vad_embedding = nn.Embedding(3, d_model) 
         self.emotion_embedding = nn.Embedding(8, d_model) 
@@ -46,25 +46,20 @@ class TurnTakingTransformer(nn.Module):
         )
         self.transformer_decoder = nn.TransformerDecoder(decoder_layer, num_layers=num_layers)
         
-        # Parallel Head Projection Output channels = vocab_size * 4 layers
-        self.final_head = nn.Linear(d_model, vocab_size * 4) 
+        # Single code autoregressive head projection
+        self.final_head = nn.Linear(d_model, vocab_size) 
         self.state_head = nn.Linear(d_model, 3) 
 
     def _generate_causal_mask(self, tgt_sz, mem_sz, device):
-        # Creates a mask of shape (tgt_sz, mem_sz)
         mask = torch.triu(torch.ones(tgt_sz, mem_sz, device=device), diagonal=1) == 1
         return mask.float().masked_fill(mask, float('-inf'))
 
     def forward(self, past_motion_codes, vad_integers, emotion_categories, social_relationship, 
                 personality_traits, audio_features, partner_audio_features, bert_features):
         
-        # Expected input shape for past_motion_codes (B, T, 4)
-        batch_size, seq_len, num_layers = past_motion_codes.shape
-        audio_len = audio_features.shape[1]
+        batch_size, seq_len = past_motion_codes.shape
         
-        # Embed all 4 code layers -> (B, T, 4, d_model) and sum them to form one frame vector -> (B, T, d_model)
-        m_emb = self.motion_embedding(past_motion_codes).sum(dim=2)
-        
+        m_emb = self.motion_embedding(past_motion_codes)
         v_emb = self.vad_embedding(vad_integers)
         e_emb = self.emotion_embedding(emotion_categories)
         
@@ -78,22 +73,17 @@ class TurnTakingTransformer(nn.Module):
         part_aud_emb = self.partner_audio_proj(partner_audio_features)
         txt_emb = self.text_proj(bert_features)
         
-        # context_bank = torch.cat([aud_emb, part_aud_emb, txt_emb], dim=1) # Depends if we want to look into the future for context
-        context_bank = aud_emb + part_aud_emb + txt_emb # with this we do not
+        context_bank = aud_emb + part_aud_emb + txt_emb 
         
         tgt_mask = self._generate_causal_mask(seq_len, seq_len, past_motion_codes.device)
-        memory_mask = self._generate_causal_mask(seq_len, audio_len, past_motion_codes.device)
         
         fused_hidden = self.transformer_decoder(
             tgt=main_sequence,
             memory=context_bank,
             tgt_mask=tgt_mask,
-            memory_mask=memory_mask
+            memory_mask=tgt_mask
         )
         
-        # Compute multi-layer classification logits
-        logits = self.final_head(fused_hidden) # (B, T, vocab_size * 4)
-        pred_logits = logits.reshape(batch_size, seq_len, 4, -1) # Reshaped to (B, T, 4, vocab_size)
-        
+        pred_logits = self.final_head(fused_hidden) # (B, seq_len, vocab_size)
         state_logits = self.state_head(fused_hidden)
         return pred_logits, state_logits

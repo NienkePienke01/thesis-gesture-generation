@@ -42,9 +42,15 @@ def train_model(rank, gpu_amount_size, shared_port, args):
                             persistent_workers=True
                             )
 
-    # Load validation data only on rank 0
     val_dataset = SeamlessDataLoader(args.data.val_lmdb, stage=2)
-    validation_loader = DataLoader(val_dataset, batch_size=args.training_params.batch_size, pin_memory=True)
+    validation_sampler = DistributedSampler(val_dataset, num_replicas=gpu_amount_size, rank=rank)
+    validation_loader = DataLoader(val_dataset, 
+                            batch_size=args.training_params.batch_size, 
+                            sampler=validation_sampler, 
+                            pin_memory=True,
+                            num_workers=args.workers_per_gpu,
+                            persistent_workers=True
+                            )
 
     trainer = SeamlessStage2Trainer(args, actual_gpu_id)
 
@@ -55,6 +61,7 @@ def train_model(rank, gpu_amount_size, shared_port, args):
     for epoch in range(args.training_params.epochs):
         global_epoch = epoch
         train_sampler.set_epoch(epoch)
+        validation_sampler.set_epoch(epoch)
         
         epoch_losses = {"total": 0.0, "motion_loss": 0.0, "state_loss": 0.0}
         progress_bar = tqdm(train_loader, disable=(rank != 0))
@@ -69,14 +76,18 @@ def train_model(rank, gpu_amount_size, shared_port, args):
                 epoch_losses[k] += v
         
         # Validation Loop
-        val_losses = trainer.val_step(next(iter(validation_loader)))
+        val_losses = {"total": 0.0, "motion_loss": 0.0, "state_loss": 0.0}
+        for batch_data in validation_loader:
+            losses = trainer.val_step(batch_data)
+            for k, v in losses.items():
+                val_losses[k] += v
                 
         trainer.scheduler.step()
             
         # Metrics Logging & Checkpoint Management
         if rank == 0 and (epoch % args.log_period == 0 or epoch == args.training_params.epochs - 1):
             avg_train_total = epoch_losses["total"] / len(train_loader)
-            avg_val_total = val_losses.get("total", 0)
+            avg_val_total = val_losses["total"] / len(train_loader)
 
             wandb.log({
                 "epoch": epoch,
@@ -84,8 +95,8 @@ def train_model(rank, gpu_amount_size, shared_port, args):
                 "train/motion_loss": epoch_losses["motion_loss"] / len(train_loader),
                 "train/state_loss": epoch_losses["state_loss"] / len(train_loader),
                 "val/total_loss": avg_val_total,
-                "val/motion_loss": val_losses.get("motion_loss", 0),
-                "val/state_loss": val_losses.get("state_loss", 0),
+                "val/motion_loss": val_losses.get("motion_loss", 0) / len(train_loader),
+                "val/state_loss": val_losses.get("state_loss", 0) / len(train_loader),
                 "lr": trainer.opt.param_groups[0]['lr']
             })
             print(f"Epoch {epoch} | Train Loss: {avg_train_total:.4f} | Val Loss: {avg_val_total:.4f}")
