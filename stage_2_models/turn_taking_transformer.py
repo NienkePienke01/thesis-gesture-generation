@@ -1,112 +1,105 @@
 import torch
 import torch.nn as nn
-import math
+from torch.nn import functional as F
 
-class PositionalEncoding(nn.Module):
-    def __init__(self, d_model, max_len=64, dropout=0.1):
-        super().__init__()
-        self.dropout = nn.Dropout(p=dropout)
-        pe = torch.zeros(max_len, d_model)
-        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
-        pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
-        self.register_buffer('pe', pe.unsqueeze(0))
-
-    def forward(self, x):
-        x = x + self.pe[:, :x.size(1)]
-        return self.dropout(x)
-
-class CoarsePositionalEncoding(nn.Module):
-    def __init__(self, d_model, max_len=256, dropout=0.1, L=4):
-        super().__init__()
-        self.dropout = nn.Dropout(p=dropout)
-        pe = torch.zeros(max_len, d_model)
-        
-        # Force the position tensor to group identical indexes together
-        position = (torch.arange(0, max_len, dtype=torch.float) // L).unsqueeze(1)
-        
-        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
-        pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
-        self.register_buffer('pe', pe.unsqueeze(0))
-
-    def forward(self, x):
-        x = x + self.pe[:, :x.size(1)]
-        return self.dropout(x)
-
+from .rotary_embedding_torch import RotaryEmbedding
+from .transformer_modules import FiLMTransformerDecoderLayer, generate_causal_mask
 
 class TurnTakingTransformer(nn.Module):
-    def __init__(self, vocab_size=513, d_model=256, nhead=8, num_layers=2, dim_feedforward=1024, 
-                 dropout=0.1, max_seq_len=64, activation="gelu", downsample_factor=4):
+    def __init__(self, vocab_size=1024, d_model=512, nhead=8, num_layers=6, dim_feedforward=2048, 
+                 dropout=0.1, downsample_factor=4):
         super().__init__()
-        self.residual_depth = 4
         
-        # Keep embeddings standard
-        self.motion_embedding = nn.Embedding(vocab_size, d_model)
+        self.downsample_factor = downsample_factor
         
-        # NEW: A linear layer to merge your L=4 code embeddings into a single frame vector
-        self.code_fusion = nn.Linear(self.residual_depth * d_model, d_model)
+        # Parallel input embedding layers for each residual vector quantization codebook layer
+        self.motion_embeddings = nn.ModuleList([
+            nn.Embedding(vocab_size, d_model) for _ in range(downsample_factor)
+        ])
         
         self.vad_embedding = nn.Embedding(3, d_model) 
         self.emotion_embedding = nn.Embedding(8, d_model) 
         self.social_embedding = nn.Embedding(11, d_model)  
-        self.personality_proj = nn.Linear(5, d_model)      
+        self.personality_projection = nn.Linear(5, d_model)      
 
-        # Standard positional encoding (No more // L hacking needed!)
-        self.pos_encoder = PositionalEncoding(d_model, max_len=max_seq_len, dropout=dropout) 
+        self.audio_projection = nn.Linear(768, d_model)         
+        self.partner_audio_projection = nn.Linear(768, d_model) 
+        self.text_projection = nn.Linear(768, d_model)          
         
-        self.audio_proj = nn.Linear(768, d_model)         
-        self.partner_audio_proj = nn.Linear(768, d_model) 
-        self.text_proj = nn.Linear(768, d_model)          
+        self.rotary = RotaryEmbedding(dim=d_model)
         
-        decoder_layer = nn.TransformerDecoderLayer(
-            d_model=d_model, nhead=nhead, dim_feedforward=dim_feedforward, 
-            dropout=dropout, activation=activation, batch_first=True
+        self.layers = nn.ModuleList([
+            FiLMTransformerDecoderLayer(
+                d_model=d_model,
+                nhead=nhead,
+                dim_feedforward=dim_feedforward,
+                dropout=dropout,
+                activation=F.gelu,
+                batch_first=True,
+                rotary=self.rotary
+            ) for _ in range(num_layers)
+        ])
+        
+        self.global_conditioning_projection = nn.Sequential(
+            nn.LayerNorm(d_model),
+            nn.Linear(d_model, d_model),
+            nn.SiLU(),
+            nn.Linear(d_model, d_model),
         )
-        self.transformer_decoder = nn.TransformerDecoder(decoder_layer, num_layers=num_layers)
         
-        # Hierarchical output heads: One head per codebook layer
+        # Parallel output prediction heads tracking each codebook index slot
         self.motion_heads = nn.ModuleList([
-            nn.Linear(d_model, vocab_size) for _ in range(self.residual_depth)
+            nn.Linear(d_model, vocab_size) for _ in range(downsample_factor)
         ])
         self.state_head = nn.Linear(d_model, 3) 
 
     def forward(self, past_motion_codes, vad_integers, emotion_categories, social_relationship, 
                 personality_traits, audio_features, partner_audio_features, bert_features):
         
-        # past_motion_codes shape: (B, T, L)
-        batch_size, seq_len, _ = past_motion_codes.shape
+        batch_size, sequence_length, num_codebooks = past_motion_codes.shape
+        device = past_motion_codes.device
+        model_hidden_dimension = self.motion_embeddings[0].embedding_dim
         
-        # Embed all codes: (B, T, L, d_model)
-        m_emb = self.motion_embedding(past_motion_codes) 
-        # Flatten the codes per frame: (B, T, L * d_model)
-        m_emb = m_emb.view(batch_size, seq_len, self.residual_depth * -1)
-        # Fuse into a single frame embedding: (B, T, d_model)
-        m_emb = self.code_fusion(m_emb)
+        # Accumulate parallel multi-codebook input embeddings
+        motion_embeddings_sum = torch.zeros((batch_size, sequence_length, model_hidden_dimension), 
+                                            device=device, dtype=audio_features.dtype)
+        for index in range(num_codebooks):
+            motion_embeddings_sum += self.motion_embeddings[index](past_motion_codes[:, :, index])
+            
+        vad_embeddings = self.vad_embedding(vad_integers)
+        emotion_embeddings = self.emotion_embedding(emotion_categories)
         
-        v_emb = self.vad_embedding(vad_integers)
-        e_emb = self.emotion_embedding(emotion_categories)
-        soc_emb = self.social_relationship(social_relationship).unsqueeze(1)
-        per_emb = self.personality_proj(personality_traits).unsqueeze(1)
+        social_embeddings = self.social_embedding(social_relationship).unsqueeze(1)
+        personality_embeddings = self.personality_projection(personality_traits).unsqueeze(1)
         
-        main_sequence = self.pos_encoder(m_emb + v_emb + e_emb + soc_emb + per_emb)
+        # Merge target stream sequence features element-wise
+        main_sequence = motion_embeddings_sum + vad_embeddings + emotion_embeddings + social_embeddings + personality_embeddings
         
-        context_bank = torch.cat([
-            self.audio_proj(audio_features), 
-            self.partner_audio_proj(partner_audio_features), 
-            self.text_proj(bert_features)
-        ], dim=1) 
+        audio_embeddings = self.audio_projection(audio_features)
+        partner_audio_embeddings = self.partner_audio_projection(partner_audio_features)
+        text_embeddings = self.text_projection(bert_features)
         
-        # Clean square causal mask matching frame length T
-        tgt_mask = torch.nn.Transformer.generate_square_subsequent_mask(seq_len, device=past_motion_codes.device)
+        # Compile multi-modal cross-attention memory sequence map
+        context_bank = torch.cat([audio_embeddings, partner_audio_embeddings, text_embeddings], dim=1)
         
-        fused_hidden = self.transformer_decoder(
-            tgt=main_sequence, memory=context_bank, tgt_mask=tgt_mask, memory_mask=None
-        )
+        # Extract mean-pooled speech vector to drive layer-wise feature scaling
+        mean_pooled_audio = audio_embeddings.mean(dim=1)
+        global_film_conditioning = self.global_conditioning_projection(mean_pooled_audio)
         
-        # Project hidden states into independent code streams: (B, T, L, vocab_size)
-        pred_logits = torch.stack([head(fused_hidden) for head in self.motion_heads], dim=2)
-        state_logits = self.state_head(fused_hidden)
+        # Establish causal matrix visibility matching downsampled time axis sequence length
+        target_mask = generate_causal_mask(source_length=sequence_length, target_length=sequence_length, device=device)
         
-        return pred_logits, state_logits
+        hidden_state = main_sequence
+        for layer in self.layers:
+            hidden_state = layer(
+                tgt=hidden_state,
+                memory=context_bank,
+                t=global_film_conditioning,
+                tgt_mask=target_mask
+            )
+        
+        # Extract unflattened parallel logit tensors
+        predictive_motion_logits = torch.stack([head(hidden_state) for head in self.motion_heads], dim=2)
+        predictive_state_logits = self.state_head(hidden_state)
+        
+        return predictive_motion_logits, predictive_state_logits

@@ -97,7 +97,7 @@ def train_model(rank, gpu_amount_size, shared_port, args):
                 "val/total_loss": avg_val_total,
                 "val/motion_loss": val_losses.get("motion_loss", 0) / len(validation_loader),
                 "val/state_loss": val_losses.get("state_loss", 0) / len(validation_loader),
-                "lr": trainer.opt.param_groups[0]['lr']
+                "lr": trainer.optimizer.param_groups[0]['lr']
             })
             print(f"Epoch {epoch} | Train Loss: {avg_train_total:.4f} | Val Loss: {avg_val_total:.4f}")
             
@@ -121,7 +121,7 @@ def train_model(rank, gpu_amount_size, shared_port, args):
                 torch.save({
                     'epoch': epoch,
                     'model_state_dict': model_state,
-                    'optimizer_state_dict': trainer.opt.state_dict(),
+                    'optimizer_state_dict': trainer.optimizer.state_dict(),
                     'loss': avg_val_total
                 }, local_checkpoint_dir / f"periodic_backup_complete_{epoch}.bin")
 

@@ -9,19 +9,19 @@ from models_dyadit.vqvae_downsampled import TemporalVertexCodecDownsampled
 import json
 
 def load_stage_1_checkpoint(model_path, config_path, device):
-    with open(config_path, 'r') as f:
-        full_config_dict = json.load(f)
-    m = full_config_dict["model_params"]
+    with open(config_path, 'r') as file_reader:
+        full_config_dict = json.load(file_reader)
+    model_parameters = full_config_dict["model_params"]
     model = TemporalVertexCodecDownsampled(
-        n_vertices=m["nb_joints"],
-        latent_dim=m["output_emb_width"],
-        categories=m["code_dim"],
-        residual_depth=m["depth"],
-        downsample_factor=m["downsample_factor"],
+        n_vertices=model_parameters["nb_joints"],
+        latent_dim=model_parameters["output_emb_width"],
+        categories=model_parameters["code_dim"],
+        residual_depth=model_parameters["depth"],
+        downsample_factor=model_parameters["downsample_factor"],
     ).to(device)
     model.load_state_dict(torch.load(model_path, map_location=device))
     model.eval()
-    return m, model
+    return model_parameters, model
 
 
 class SeamlessStage2Trainer:
@@ -29,14 +29,15 @@ class SeamlessStage2Trainer:
         self.args = args
         self.device = torch.device(f"cuda:{gpu_id}")
 
-        m, self.stage1_model = load_stage_1_checkpoint(
+        model_parameters, self.stage1_model = load_stage_1_checkpoint(
             args.stage_1_pretrain.checkpoint_path, 
             args.stage_1_pretrain.config_path, 
             self.device
         )
-        self.stage_1_downsample_factor = m["downsample_factor"]
-        self.code_dim = m["code_dim"]
-        self.vocab_size = m["code_dim"] + 1
+        self.stage_1_downsample_factor = model_parameters["downsample_factor"]
+        self.code_dimension = model_parameters["code_dim"]
+        self.vocab_size = model_parameters["code_dim"] + 1  
+        
         self.model = TurnTakingTransformer(
             vocab_size=self.vocab_size,
             d_model=args.model_params.d_model,
@@ -44,16 +45,13 @@ class SeamlessStage2Trainer:
             num_layers=args.model_params.num_layers,
             dim_feedforward=args.model_params.dim_feedforward,
             dropout=args.model_params.dropout,
-            max_seq_len=args.model_params.max_seq_len,
-            activation=args.model_params.activation,
             downsample_factor=self.stage_1_downsample_factor
         ).to(self.device)
 
         self.model = DDP(self.model, device_ids=[gpu_id])
+        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=args.training_params.lr_base, weight_decay=1e-4)
         
-        self.opt = torch.optim.Adam(self.model.parameters(), lr=args.training_params.lr_base)
-        
-        def lr_lambda(epoch):
+        def learning_rate_lambda(epoch):
             if epoch < args.training_params.warmup_epochs:
                 return float(epoch + 1) / float(max(1, args.training_params.warmup_epochs))
             elif epoch < args.training_params.decay_epochs:
@@ -64,10 +62,9 @@ class SeamlessStage2Trainer:
             else:
                 return 0.01
 
-        self.scheduler = torch.optim.lr_scheduler.LambdaLR(self.opt, lr_lambda=lr_lambda)
-        
-        self.motion_loss_fn = nn.CrossEntropyLoss()
-        self.state_loss_fn = nn.CrossEntropyLoss()
+        self.scheduler = torch.optim.lr_scheduler.LambdaLR(self.optimizer, learning_rate_lambda)
+        self.motion_loss_function = nn.CrossEntropyLoss()
+        self.state_loss_function = nn.CrossEntropyLoss()
 
     @torch.no_grad()
     def _extract_stage1_tokens(self, target_pose_6d):
@@ -75,60 +72,50 @@ class SeamlessStage2Trainer:
 
     def train_step(self, dict_data, step_percentage):
         self.model.train()
-        self.opt.zero_grad()
+        self.optimizer.zero_grad()
         
         target_pose = dict_data["pose"].to(self.device, non_blocking=True)
-        batch_size, frames = target_pose.shape[0], target_pose.shape[1]
-        target_pose_matrix = rc.axis_angle_to_matrix(target_pose.reshape(batch_size, frames, 43, 3))
-        target_pose_6d = rc.matrix_to_rotation_6d(target_pose_matrix).reshape(batch_size, frames, 258)
+        batch_size, total_frames = target_pose.shape[0], target_pose.shape[1]
+        target_pose_matrix = rc.axis_angle_to_matrix(target_pose.reshape(batch_size, total_frames, 43, 3))
+        target_pose_6d = rc.matrix_to_rotation_6d(target_pose_matrix).reshape(batch_size, total_frames, 258)
         
-        # gt_tokens shape from Stage 1 VQ-VAE: (B, T, L)
-        gt_tokens = self._extract_stage1_tokens(target_pose_6d)
+        # Ground truth tokens extraction layout [Batch, Sequence_Length, Codebooks]
+        ground_truth_tokens = self._extract_stage1_tokens(target_pose_6d)
         max_history = self.args.model_params.max_history_frames
-        gt_tokens = gt_tokens[:, -max_history:]
-        B, T, L = gt_tokens.shape
+        ground_truth_tokens = ground_truth_tokens[:, -max_history:]
+        batch, sequence_length, num_codebooks = ground_truth_tokens.shape
         
-        # Slice frame-level context parameters down to frame length T
-        vad_sliced = dict_data["conversation_states"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor][:, :T]
-        emotion_sliced = dict_data["emotions"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor][:, :T]
-        bert_sliced = dict_data["bert"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor][:, :T]
-        audio_sliced = dict_data["audio"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor][:, :T]
-        partner_audio_sliced = dict_data["partner_audio"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor][:, :T]
+        # Subsample frame context arrays cleanly down along time axis trajectory
+        vad_integers = dict_data["conversation_states"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
+        emotions = dict_data["emotions"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
+        bert_features = dict_data["bert"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
         
         social_relationship = dict_data["social_relationship"].to(self.device, non_blocking=True)
         personality_traits = dict_data["personality_traits"].to(self.device, non_blocking=True)
         
-        # Autoregressive shifting along the frame dimension (T-1)
-        past_motion_input = gt_tokens[:, :-1, :].clone()
+        audio_features = dict_data["audio"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
+        partner_audio_features = dict_data["partner_audio"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
+        
+        audio_sliced = audio_features[:, :sequence_length]
+        partner_audio_sliced = partner_audio_features[:, :sequence_length]
+        bert_sliced = bert_features[:, :sequence_length]
+        vad_sliced = vad_integers[:, :sequence_length]
+        emotion_sliced = emotions[:, :sequence_length]
+        
+        # Slice step histories cleanly along the unflattened time dimension sequence
+        past_motion_input = ground_truth_tokens[:, :-1].clone()
         vad_input = vad_sliced[:, :-1].clone()
         emotion_input = emotion_sliced[:, :-1].clone()
+
         audio_input = audio_sliced[:, :-1]
         partner_audio_input = partner_audio_sliced[:, :-1]
         bert_input = bert_sliced[:, :-1]
 
-        # UGM Masking applied cleanly across frame indices
-        max_mask_prob = 0.40
-        cosine_mask_prob = max_mask_prob * (0.5 * (1.0 - math.cos(math.pi * step_percentage)))
-        mask_token_id = self.code_dim
-        token_mask_indices = torch.rand(past_motion_input.shape, device=self.device) < cosine_mask_prob
-        past_motion_input[token_mask_indices] = mask_token_id
-
-        # RM Masking
-        if torch.rand(1).item() < 0.15:
-            rand_val = torch.rand(1).item()
-            if rand_val < 0.33:
-                vad_input = torch.randint(0, 3, vad_input.shape, device=self.device)
-            elif rand_val < 0.66:
-                emotion_input = torch.full_like(emotion_input, 5)
-            else:
-                personality_traits = torch.zeros_like(personality_traits)
-        
-        # Targets represent the next time step offset
-        target_tokens = gt_tokens[:, 1:, :]
+        # Shift target elements step-wise to align for evaluation loss
+        target_tokens = ground_truth_tokens[:, 1:]
         target_states = vad_sliced[:, 1:]
 
-        # Model takes and evaluates frame sequence elements directly
-        pred_logits, pred_state_logits = self.model(
+        predictive_motion_logits, predictive_state_logits = self.model(
             past_motion_codes=past_motion_input,
             vad_integers=vad_input,
             emotion_categories=emotion_input,
@@ -139,20 +126,24 @@ class SeamlessStage2Trainer:
             bert_features=bert_input
         )
         
-        # Compute hierarchical loss across all code heads independently
+        # Loop loss calculations across parallel multi-codebook channels directly
         motion_loss = 0.0
-        for i in range(L):
-            motion_loss += self.motion_loss_fn(
-                pred_logits[:, :, i, :].reshape(-1, pred_logits.size('-1')),
-                target_tokens[:, :, i].reshape(-1)
+        for index in range(num_codebooks):
+            motion_loss += self.motion_loss_function(
+                predictive_motion_logits[:, :, index, :].reshape(-1, predictive_motion_logits.size(-1)),
+                target_tokens[:, :, index].reshape(-1)
             )
-        state_loss = self.state_loss_fn(pred_state_logits.reshape(-1, pred_state_logits.size(-1)), target_states.reshape(-1))
+        state_loss = self.state_loss_function(
+            predictive_state_logits.reshape(-1, predictive_state_logits.size(-1)), 
+            target_states.reshape(-1)
+        )
         
-        total_loss = (self.args.loss_weights.cross_entropy * motion_loss) + (self.args.loss_weights.conversation_state_weight * state_loss)
+        total_loss = (self.args.loss_weights.cross_entropy * motion_loss) + \
+                     (self.args.loss_weights.conversation_state_weight * state_loss)
                      
         total_loss.backward()
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.training_params.grad_norm)
-        self.opt.step()
+        self.optimizer.step()
         
         return {
             "total": total_loss.item(),
@@ -165,35 +156,43 @@ class SeamlessStage2Trainer:
         self.model.eval()
         
         target_pose = dict_data["pose"].to(self.device, non_blocking=True)
-        batch_size, frames = target_pose.shape[0], target_pose.shape[1]
-        target_pose_matrix = rc.axis_angle_to_matrix(target_pose.reshape(batch_size, frames, 43, 3))
-        target_pose_6d = rc.matrix_to_rotation_6d(target_pose_matrix).reshape(batch_size, frames, 258)
+        batch_size, total_frames = target_pose.shape[0], target_pose.shape[1]
+        target_pose_matrix = rc.axis_angle_to_matrix(target_pose.reshape(batch_size, total_frames, 43, 3))
+        target_pose_6d = rc.matrix_to_rotation_6d(target_pose_matrix).reshape(batch_size, total_frames, 258)
         
-        gt_tokens = self._extract_stage1_tokens(target_pose_6d)
+        ground_truth_tokens = self._extract_stage1_tokens(target_pose_6d)
         max_history = self.args.model_params.max_history_frames
-        gt_tokens = gt_tokens[:, -max_history:]
-        B, T, L = gt_tokens.shape
+        ground_truth_tokens = ground_truth_tokens[:, -max_history:]
+        _, sequence_length, num_codebooks = ground_truth_tokens.shape
         
-        vad_integers = dict_data["conversation_states"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor][:, :T]
-        emotions = dict_data["emotions"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor][:, :T]
-        bert_features = dict_data["bert"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor][:, :T]
-        audio_features = dict_data["audio"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor][:, :T]
-        partner_audio_features = dict_data["partner_audio"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor][:, :T]
+        vad_integers = dict_data["conversation_states"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
+        emotions = dict_data["emotions"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
+        bert_features = dict_data["bert"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
         
         social_relationship = dict_data["social_relationship"].to(self.device, non_blocking=True)
         personality_traits = dict_data["personality_traits"].to(self.device, non_blocking=True)
         
-        past_motion_input = gt_tokens[:, :-1, :].clone()
-        vad_input = vad_integers[:, :-1].clone()
-        emotion_input = emotions[:, :-1].clone()
-        audio_input = audio_features[:, :-1]
-        partner_audio_input = partner_audio_features[:, :-1]
-        bert_input = bert_features[:, :-1]
+        audio_features = dict_data["audio"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
+        partner_audio_features = dict_data["partner_audio"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
         
-        target_tokens = gt_tokens[:, 1:, :]
-        target_states = vad_integers[:, 1:]
+        audio_sliced = audio_features[:, :sequence_length]
+        partner_audio_sliced = partner_audio_features[:, :sequence_length]
+        bert_sliced = bert_features[:, :sequence_length]
+        vad_sliced = vad_integers[:, :sequence_length]
+        emotion_sliced = emotions[:, :sequence_length]
+
+        past_motion_input = ground_truth_tokens[:, :-1].clone()
+        vad_input = vad_sliced[:, :-1].clone()
+        emotion_input = emotion_sliced[:, :-1].clone()
+
+        audio_input = audio_sliced[:, :-1]
+        partner_audio_input = partner_audio_sliced[:, :-1]
+        bert_input = bert_sliced[:, :-1]
         
-        pred_logits, pred_state_logits = self.model(
+        target_tokens = ground_truth_tokens[:, 1:]
+        target_states = vad_sliced[:, 1:]
+        
+        predictive_motion_logits, predictive_state_logits = self.model(
             past_motion_codes=past_motion_input,
             vad_integers=vad_input,
             emotion_categories=emotion_input,
@@ -205,14 +204,18 @@ class SeamlessStage2Trainer:
         )
         
         motion_loss = 0.0
-        for i in range(L):
-            motion_loss += self.motion_loss_fn(
-                pred_logits[:, :, i, :].reshape(-1, pred_logits.size(-1)),
-                target_tokens[:, :, i].reshape(-1)
+        for index in range(num_codebooks):
+            motion_loss += self.motion_loss_function(
+                predictive_motion_logits[:, :, index, :].reshape(-1, predictive_motion_logits.size(-1)),
+                target_tokens[:, :, index].reshape(-1)
             )
-        state_loss = self.state_loss_fn(pred_state_logits.reshape(-1, pred_state_logits.size(-1)), target_states.reshape(-1))
+        state_loss = self.state_loss_function(
+            predictive_state_logits.reshape(-1, predictive_state_logits.size(-1)), 
+            target_states.reshape(-1)
+        )
         
-        total_loss = (self.args.loss_weights.cross_entropy * motion_loss) + (self.args.loss_weights.conversation_state_weight * state_loss)
+        total_loss = (self.args.loss_weights.cross_entropy * motion_loss) + \
+                     (self.args.loss_weights.conversation_state_weight * state_loss)
                      
         return {
             "total": total_loss.item(),
