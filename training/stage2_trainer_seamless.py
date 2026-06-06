@@ -1,12 +1,12 @@
 import torch
 import torch.nn as nn
-import math
-from stage_2_models.turn_taking_transformer import TurnTakingTransformer
 from torch.nn.parallel import DistributedDataParallel as DDP
-from types import SimpleNamespace
 from utils import rotation_conversions as rc
 from models_dyadit.vqvae_downsampled import TemporalVertexCodecDownsampled
+from stage_2_models.autoregressive_transformer import AutoRegressiveMotionTransformer
 import json
+import math
+import random
 
 def load_stage_1_checkpoint(model_path, config_path, device):
     with open(config_path, 'r') as file_reader:
@@ -23,7 +23,6 @@ def load_stage_1_checkpoint(model_path, config_path, device):
     model.eval()
     return model_parameters, model
 
-
 class SeamlessStage2Trainer:
     def __init__(self, args, gpu_id):
         self.args = args
@@ -34,41 +33,90 @@ class SeamlessStage2Trainer:
             args.stage_1_pretrain.config_path, 
             self.device
         )
-        self.stage_1_downsample_factor = model_parameters["downsample_factor"]
-        self.code_dimension = model_parameters["code_dim"]
-        self.vocab_size = model_parameters["code_dim"] + 1  
-        
-        self.model = TurnTakingTransformer(
-            vocab_size=self.vocab_size,
-            d_model=args.model_params.d_model,
-            nhead=args.model_params.nhead,
-            num_layers=args.model_params.num_layers,
-            dim_feedforward=args.model_params.dim_feedforward,
-            dropout=args.model_params.dropout,
-            downsample_factor=self.stage_1_downsample_factor
-        ).to(self.device)
-
+        self.code_dim = model_parameters["code_dim"]
+        self.model = AutoRegressiveMotionTransformer(args, vocab_size=model_parameters["code_dim"] + 1).to(self.device)
         self.model = DDP(self.model, device_ids=[gpu_id])
-        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=args.training_params.lr_base, weight_decay=1e-4)
+        
+        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=args.training_params.lr_base, weight_decay=1e-2)
         
         def learning_rate_lambda(epoch):
+            minimum_learning_rate_ratio = getattr(args.training_params, "min_lr_ratio", 0.05)
             if epoch < args.training_params.warmup_epochs:
                 return float(epoch + 1) / float(max(1, args.training_params.warmup_epochs))
             elif epoch < args.training_params.decay_epochs:
                 progress = float(epoch - args.training_params.warmup_epochs) / float(
                     max(1, args.training_params.decay_epochs - args.training_params.warmup_epochs)
                 )
-                return 0.5 * (1.0 + math.cos(math.pi * progress))
+                cosine_decay = 0.5 * (1.0 + math.cos(math.pi * progress))
+                return minimum_learning_rate_ratio + (1.0 - minimum_learning_rate_ratio) * cosine_decay
             else:
-                return 0.01
+                return minimum_learning_rate_ratio
 
         self.scheduler = torch.optim.lr_scheduler.LambdaLR(self.optimizer, learning_rate_lambda)
-        self.motion_loss_function = nn.CrossEntropyLoss()
-        self.state_loss_function = nn.CrossEntropyLoss()
+        self.ce_loss_function = nn.CrossEntropyLoss()
+        self.mse_loss_function = nn.MSELoss()
 
     @torch.no_grad()
     def _extract_stage1_tokens(self, target_pose_6d):
         return self.stage1_model.encode(target_pose_6d)
+
+    @torch.no_grad()
+    def _extract_codebook_latent_vector(self, encoded: torch.Tensor) -> torch.Tensor:
+        """tokens -> continuous codebook embedding [B, T // downsample_factor, latent_dim]."""
+        reformat = encoded.dim() > 2
+        if reformat:
+            B, T_down, _ = encoded.shape
+            encoded = encoded.reshape((-1, self.stage1_model.residual_depth))
+        rep = self.stage1_model.quantizer.decode(encoded)
+        if reformat:
+            rep = rep.reshape((B, T_down, -1))
+        return rep
+
+    @torch.no_grad()
+    def _compute_predicted_codebook_latent_vector(self, logits: torch.Tensor) -> torch.Tensor:
+        predicted_latent_out = 0
+        for i, layer in enumerate(self.stage1_model.quantizer.layers):
+            probs = nn.functional.softmax(logits[:, :, :, i], dim=-1) # Probability for each code in this layer [B, T, 512]
+
+            mask_embedding = torch.zeros(1, layer.codebook.shape[1], device=layer.codebook.device) # Additional vector of for example size 64 to add (0s) since its additive
+            codebook_layer = torch.cat([layer.codebook, mask_embedding], dim=0) # layer.codebook is [513, 64] where 512(+1) = codedim with mask and 64 the latent vector size
+            
+            soft_quantized = torch.matmul(probs, codebook_layer)
+            predicted_latent_out += soft_quantized
+
+        return predicted_latent_out
+
+    def _mask_ground_truth_tokens(self, max_mask_prob, step_percentage, input_tokens, mask_token):
+        """
+        Masks the input tokens with the mask_token, will mask in blocks so not uniform random
+        Will never mask the first motion code out of all layers, therefore the first head will always be trained with trainer enforcing
+        """
+        if max_mask_prob == 0:
+            return input_tokens.clone()
+        B, T, L = input_tokens.shape
+        device = input_tokens.device
+        cosine_mask_prob = max_mask_prob * (0.5 * (1.0 - math.cos(math.pi * step_percentage)))
+        mask = torch.zeros((B, T, L), dtype=torch.bool, device=device)
+
+        max_block_size = L-1 # Block masking, define the max block size
+        block_size = max(1, math.ceil(max_block_size * step_percentage))
+        num_blocks = max(1, int((T * max_block_size * cosine_mask_prob) / block_size)) # Calculate how many blocks to mask based on probability
+        
+        for b in range(B):
+            for _ in range(num_blocks):
+                start = random.randint(0, T - block_size)
+                # Mask the chunk
+                num_layers_to_mask = random.randint(1, L-1)
+                random_layers = random.sample(range(1, L), num_layers_to_mask)
+                mask[b, start : start + block_size, random_layers] = True
+                
+        # Force Layer 0 (Base) to always be visible to provide semantic stability
+        mask[:, :, 0] = False 
+        
+        # Apply Mask
+        masked_tokens = input_tokens.clone()
+        masked_tokens[mask] = mask_token
+        return masked_tokens, mask
 
     def train_step(self, dict_data, step_percentage):
         self.model.train()
@@ -79,77 +127,56 @@ class SeamlessStage2Trainer:
         target_pose_matrix = rc.axis_angle_to_matrix(target_pose.reshape(batch_size, total_frames, 43, 3))
         target_pose_6d = rc.matrix_to_rotation_6d(target_pose_matrix).reshape(batch_size, total_frames, 258)
         
-        # Ground truth tokens extraction layout [Batch, Sequence_Length, Codebooks]
-        ground_truth_tokens = self._extract_stage1_tokens(target_pose_6d)
-        max_history = self.args.model_params.max_history_frames
-        ground_truth_tokens = ground_truth_tokens[:, -max_history:]
-        batch, sequence_length, num_codebooks = ground_truth_tokens.shape
+        ground_truth_tokens = self._extract_stage1_tokens(target_pose_6d) # torch.Size([32, 16, 4])
         
-        # Subsample frame context arrays cleanly down along time axis trajectory
-        vad_integers = dict_data["conversation_states"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
-        emotions = dict_data["emotions"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
-        bert_features = dict_data["bert"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
+        input_tokens = ground_truth_tokens[:, :-1] # torch.Size([32, 15, 4]) tokens 0-14
+        # Token Masking, set max_mask_prob to 0 to skip this
+        input_tokens, used_mask = self._mask_ground_truth_tokens(self.args.training_params.max_mask_prob, step_percentage, input_tokens, self.code_dim)
+        #
+        target_tokens = ground_truth_tokens[:, 1:] # torch.Size([32, 15, 4]) tokens 1-15 (the ones we want to learn)
+        target_latent_vectors = self._extract_codebook_latent_vector(target_tokens)
         
-        social_relationship = dict_data["social_relationship"].to(self.device, non_blocking=True)
-        personality_traits = dict_data["personality_traits"].to(self.device, non_blocking=True)
-        
-        audio_features = dict_data["audio"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
-        partner_audio_features = dict_data["partner_audio"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
-        
-        audio_sliced = audio_features[:, :sequence_length]
-        partner_audio_sliced = partner_audio_features[:, :sequence_length]
-        bert_sliced = bert_features[:, :sequence_length]
-        vad_sliced = vad_integers[:, :sequence_length]
-        emotion_sliced = emotions[:, :sequence_length]
-        
-        # Slice step histories cleanly along the unflattened time dimension sequence
-        past_motion_input = ground_truth_tokens[:, :-1].clone()
-        vad_input = vad_sliced[:, :-1].clone()
-        emotion_input = emotion_sliced[:, :-1].clone()
-
-        audio_input = audio_sliced[:, :-1]
-        partner_audio_input = partner_audio_sliced[:, :-1]
-        bert_input = bert_sliced[:, :-1]
-
-        # Shift target elements step-wise to align for evaluation loss
-        target_tokens = ground_truth_tokens[:, 1:]
-        target_states = vad_sliced[:, 1:]
-
-        predictive_motion_logits, predictive_state_logits = self.model(
-            past_motion_codes=past_motion_input,
-            vad_integers=vad_input,
-            emotion_categories=emotion_input,
-            social_relationship=social_relationship,
-            personality_traits=personality_traits,
-            audio_features=audio_input,
-            partner_audio_features=partner_audio_input,
-            bert_features=bert_input
+        logits, _ = self.model(
+            motion_tokens=input_tokens,
+            audio=dict_data["audio"].to(self.device), # torch.Size([32, 64, 768])
+            partner_audio=dict_data["partner_audio"].to(self.device),
+            bert=dict_data["bert"].to(self.device),
+            emotions=dict_data["emotions"].to(self.device),
+            social=dict_data["social_relationship"].to(self.device),
+            personality=dict_data["personality_traits"].to(self.device),
+            conversation_state=dict_data["conversation_states"].to(self.device)
         )
+        predicted_latent_vectors = self._compute_predicted_codebook_latent_vector(logits)
         
-        # Loop loss calculations across parallel multi-codebook channels directly
-        motion_loss = 0.0
-        for index in range(num_codebooks):
-            motion_loss += self.motion_loss_function(
-                predictive_motion_logits[:, :, index, :].reshape(-1, predictive_motion_logits.size(-1)),
-                target_tokens[:, :, index].reshape(-1)
-            )
-        state_loss = self.state_loss_function(
-            predictive_state_logits.reshape(-1, predictive_state_logits.size(-1)), 
-            target_states.reshape(-1)
-        )
-        
-        total_loss = (self.args.loss_weights.cross_entropy * motion_loss) + \
-                     (self.args.loss_weights.conversation_state_weight * state_loss)
+        ce_loss = 0
+        masked_loss = 0
+        ce_losses_layered = {}
+
+        for i in range(logits.shape[-1]):
+            layer_num = i + 1
+            # Reshape for cross-entropy
+            logits_flat = logits[:, :, :, i].reshape(-1, logits.size(2)) # [B*T, vocab_size]
+            targets_flat = target_tokens[:, :, i].reshape(-1) # [B*T]
+            mask_flat = used_mask[:, :, i].reshape(-1) # [B*T]
+    
+            # causal Loss (all tokens)
+            loss = self.ce_loss_function(logits_flat, targets_flat)
+            ce_loss += loss
+            ce_losses_layered[layer_num] = loss.item()
+
+            # Masked Loss (masked tokens only)
+            if mask_flat.any():
+                masked_loss += self.ce_loss_function(logits_flat[mask_flat], targets_flat[mask_flat])
+    
+        mse_loss = self.mse_loss_function(target_latent_vectors, predicted_latent_vectors)
+            
+        total_loss = ((ce_loss + masked_loss) * self.args.loss_weights.ce_weight) + (self.args.loss_weights.mse_weight * mse_loss)
                      
         total_loss.backward()
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.training_params.grad_norm)
         self.optimizer.step()
         
-        return {
-            "total": total_loss.item(),
-            "motion_loss": motion_loss.item(),
-            "state_loss": state_loss.item()
-        }
+        return {"total": total_loss.item(), "ce": ce_loss, "mse": mse_loss, "ce_loss_layered": ce_losses_layered, "masked_loss": masked_loss}
 
     @torch.no_grad()
     def val_step(self, dict_data):
@@ -161,64 +188,40 @@ class SeamlessStage2Trainer:
         target_pose_6d = rc.matrix_to_rotation_6d(target_pose_matrix).reshape(batch_size, total_frames, 258)
         
         ground_truth_tokens = self._extract_stage1_tokens(target_pose_6d)
-        max_history = self.args.model_params.max_history_frames
-        ground_truth_tokens = ground_truth_tokens[:, -max_history:]
-        _, sequence_length, num_codebooks = ground_truth_tokens.shape
         
-        vad_integers = dict_data["conversation_states"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
-        emotions = dict_data["emotions"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
-        bert_features = dict_data["bert"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
+        input_tokens = ground_truth_tokens[:, :-1] # torch.Size([32, 15, 4])
+        target_tokens = ground_truth_tokens[:, 1:] # torch.Size([32, 15, 4])
+        target_latent_vectors = self._extract_codebook_latent_vector(target_tokens)
         
-        social_relationship = dict_data["social_relationship"].to(self.device, non_blocking=True)
-        personality_traits = dict_data["personality_traits"].to(self.device, non_blocking=True)
-        
-        audio_features = dict_data["audio"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
-        partner_audio_features = dict_data["partner_audio"].to(self.device, non_blocking=True)[:, ::self.stage_1_downsample_factor]
-        
-        audio_sliced = audio_features[:, :sequence_length]
-        partner_audio_sliced = partner_audio_features[:, :sequence_length]
-        bert_sliced = bert_features[:, :sequence_length]
-        vad_sliced = vad_integers[:, :sequence_length]
-        emotion_sliced = emotions[:, :sequence_length]
-
-        past_motion_input = ground_truth_tokens[:, :-1].clone()
-        vad_input = vad_sliced[:, :-1].clone()
-        emotion_input = emotion_sliced[:, :-1].clone()
-
-        audio_input = audio_sliced[:, :-1]
-        partner_audio_input = partner_audio_sliced[:, :-1]
-        bert_input = bert_sliced[:, :-1]
-        
-        target_tokens = ground_truth_tokens[:, 1:]
-        target_states = vad_sliced[:, 1:]
-        
-        predictive_motion_logits, predictive_state_logits = self.model(
-            past_motion_codes=past_motion_input,
-            vad_integers=vad_input,
-            emotion_categories=emotion_input,
-            social_relationship=social_relationship,
-            personality_traits=personality_traits,
-            audio_features=audio_input,
-            partner_audio_features=partner_audio_input,
-            bert_features=bert_input
+        logits, _ = self.model(
+            motion_tokens=input_tokens,
+            audio=dict_data["audio"].to(self.device), # torch.Size([32, 64, 768])
+            partner_audio=dict_data["partner_audio"].to(self.device),
+            bert=dict_data["bert"].to(self.device),
+            emotions=dict_data["emotions"].to(self.device),
+            social=dict_data["social_relationship"].to(self.device),
+            personality=dict_data["personality_traits"].to(self.device),
+            conversation_state=dict_data["conversation_states"].to(self.device)
         )
+        predicted_latent_vectors = self._compute_predicted_codebook_latent_vector(logits)
         
-        motion_loss = 0.0
-        for index in range(num_codebooks):
-            motion_loss += self.motion_loss_function(
-                predictive_motion_logits[:, :, index, :].reshape(-1, predictive_motion_logits.size(-1)),
-                target_tokens[:, :, index].reshape(-1)
+        ce_loss = 0
+        ce_losses_layered = {}
+
+        for i in range(logits.shape[-1]):
+            layer_num = i + 1
+            current_target = target_tokens[:, :, i] 
+
+            loss = self.ce_loss_function(
+                logits[:, :, :, i].reshape(-1, logits.size(2)), 
+                current_target.reshape(-1)
             )
-        state_loss = self.state_loss_function(
-            predictive_state_logits.reshape(-1, predictive_state_logits.size(-1)), 
-            target_states.reshape(-1)
-        )
+
+            ce_losses_layered[layer_num] = loss.item()
+            ce_loss += loss
+    
+        mse_loss = self.mse_loss_function(target_latent_vectors, predicted_latent_vectors)
         
-        total_loss = (self.args.loss_weights.cross_entropy * motion_loss) + \
-                     (self.args.loss_weights.conversation_state_weight * state_loss)
+        total_loss = ce_loss + (self.args.loss_weights.mse_weight * mse_loss)
                      
-        return {
-            "total": total_loss.item(),
-            "motion_loss": motion_loss.item(),
-            "state_loss": state_loss.item()
-        }
+        return {"total": total_loss.item(), "ce": ce_loss, "mse": mse_loss, "ce_loss_layered": ce_losses_layered}

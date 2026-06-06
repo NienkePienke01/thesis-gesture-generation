@@ -23,7 +23,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
-import vqvae_downsampled as vqvae  # noqa: E402
+import models_dyadit.vqvae_downsampled as vqvae  # noqa: E402
 
 
 def build_model(config_path: str = None, device: str = None) -> vqvae.TemporalVertexCodecDownsampled:

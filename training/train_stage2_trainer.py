@@ -63,24 +63,35 @@ def train_model(rank, gpu_amount_size, shared_port, args):
         train_sampler.set_epoch(epoch)
         validation_sampler.set_epoch(epoch)
         
-        epoch_losses = {"total": 0.0, "motion_loss": 0.0, "state_loss": 0.0}
+        epoch_losses = {"total": 0.0, "ce": 0.0, "mse": 0.0, "ce_loss_layered": None, "masked_loss": 0.0}
         progress_bar = tqdm(train_loader, disable=(rank != 0))
         
         # Training Loop
         for batch_idx, batch_data in enumerate(progress_bar):
             current_step = (epoch * len(train_loader)) + batch_idx
             step_percentage = current_step / total_steps
-            
             losses = trainer.train_step(batch_data, step_percentage)
             for k, v in losses.items():
-                epoch_losses[k] += v
+                if k == "ce_loss_layered":
+                    if epoch_losses[k] is None:
+                        epoch_losses[k] = {layer: 0.0 for layer in v.keys()}
+                    for layer, val in v.items():
+                        epoch_losses[k][layer] += val
+                else:
+                    epoch_losses[k] += v
         
         # Validation Loop
-        val_losses = {"total": 0.0, "motion_loss": 0.0, "state_loss": 0.0}
+        val_losses = {"total": 0.0, "ce": 0.0, "mse": 0.0, "ce_loss_layered": None}
         for batch_data in validation_loader:
             losses = trainer.val_step(batch_data)
             for k, v in losses.items():
-                val_losses[k] += v
+                if k == "ce_loss_layered":
+                    if val_losses[k] is None:
+                        val_losses[k] = {layer: 0.0 for layer in v.keys()}
+                    for layer, val in v.items():
+                        val_losses[k][layer] += val
+                else:
+                    val_losses[k] += v
                 
         trainer.scheduler.step()
             
@@ -88,16 +99,27 @@ def train_model(rank, gpu_amount_size, shared_port, args):
         if rank == 0 and (epoch % args.log_period == 0 or epoch == args.training_params.epochs - 1):
             avg_train_total = epoch_losses["total"] / len(train_loader)
             avg_val_total = val_losses["total"] / len(validation_loader)
+            layered_metrics_train = {
+                f"train/ce_layer_{k}": v / len(train_loader) 
+                for k, v in epoch_losses["ce_loss_layered"].items()
+            }
+            layered_metrics_val = {
+                f"val/ce_layer_{k}": v / len(validation_loader) 
+                for k, v in val_losses["ce_loss_layered"].items()
+            }
 
             wandb.log({
                 "epoch": epoch,
                 "train/total_loss": avg_train_total,
-                "train/motion_loss": epoch_losses["motion_loss"] / len(train_loader),
-                "train/state_loss": epoch_losses["state_loss"] / len(train_loader),
+                "train/ce": epoch_losses["ce"] / len(train_loader),
+                "train/mse": epoch_losses["mse"] / len(train_loader),
+                "train/masked_ce": epoch_losses["masked_loss"] / len(train_loader),
                 "val/total_loss": avg_val_total,
-                "val/motion_loss": val_losses.get("motion_loss", 0) / len(validation_loader),
-                "val/state_loss": val_losses.get("state_loss", 0) / len(validation_loader),
-                "lr": trainer.optimizer.param_groups[0]['lr']
+                "val/ce": val_losses.get("ce", 0) / len(validation_loader),
+                "val/mse": val_losses.get("mse", 0) / len(validation_loader),
+                "lr": trainer.optimizer.param_groups[0]['lr'],
+                **layered_metrics_train,
+                **layered_metrics_val
             })
             print(f"Epoch {epoch} | Train Loss: {avg_train_total:.4f} | Val Loss: {avg_val_total:.4f}")
             
