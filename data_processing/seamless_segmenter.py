@@ -189,6 +189,10 @@ class SeamlessSegmenter:
                         entry["conversation_states"] = loader_data.aligned_conversation_states[pose_start:pose_end]
                         entry["social_relationship"] = relationship_id
                         entry["personality_traits"] = loader_data.personality_vector
+                        entry["partner_pose"] = partner_loader_data.aligned_pose[pose_start:pose_end]
+                        partner_sample_words = partner_loader_data.aligned_words[pose_start:pose_end]
+                        partner_sample_bert = np.array([f["embedding"] for f in partner_sample_words])
+                        entry["partner_bert"] = partner_sample_bert
                     
                     key = f"{sample_idx:08d}".encode("ascii")
                     serialized_entry = pickle.dumps(entry)
