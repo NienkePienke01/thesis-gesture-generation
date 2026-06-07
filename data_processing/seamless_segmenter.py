@@ -104,14 +104,16 @@ class SeamlessSegmenter:
         # Loop over each sample
         total_samples = len(self.dataset.samples)
         items = list(self.dataset.samples.items())
-        for interaction_idx, (file_id, _) in enumerate(items):
+        for interaction_idx, (_, _) in enumerate(items):
             # Get a seamless loader, of the data sample for easy access to all needed information
             partner_loader = None
             if self.include_stage_2_partner_data:
                 loader, partner_loader = self.dataset.get_interaction_pair(self.dataset.file_ids[interaction_idx], {'load_vertices': False, 'with_meta_data': True})
                 if partner_loader is None:
+                    logger.warning(f"No partner found for {interaction_idx}")
                     continue
                 if loader.meta_data.relationship_detail is None and self.relationship_detail_mandatory:
+                    logger.warning(f"No relationship_detail found for {interaction_idx}")
                     continue
                 detail_str = str(loader.meta_data.relationship_detail).lower().strip()
                 relationship_id = relationship_detail_map.get(detail_str, 0)
@@ -125,6 +127,7 @@ class SeamlessSegmenter:
                 partner_loader_data = self._get_loader_segmentation_data(partner_loader, loader)
                 loop_subdivisions = min(loader_data.num_subdivisions, partner_loader_data.num_subdivisions)
             if self.personality_detail_mandatory and np.all(loader_data.personality_vector == 0.0):
+                logger.warning(f"No personality info found for {interaction_idx}")
                 continue
 
             # Write to the database
@@ -228,7 +231,7 @@ class SeamlessSegmenter:
         self.hubert_model.to(device)
         with torch.no_grad():
             # Extract raw hidden state sequence [1, 50Hz_Frames, 1024]
-            audio_embeddings = self.hubert_model(input_values).last_hidden_state.cpu().numpy()
+            audio_embeddings = self.hubert_model(input_values).last_hidden_state.squeeze(0).cpu().numpy()
 
         # get the lookup table for the bert word vectors
         bert_lookup_table = self._get_bert_transcript(loader.meta_data.transcript)
@@ -273,8 +276,8 @@ class SeamlessSegmenter:
         clipose_end_time = round_seconds_common - self.clean_final
         
         # pose indices
-        pose_start = clipose_start_time * self.pose_fps
-        pose_end = clipose_end_time * self.pose_fps
+        pose_start = int(clipose_start_time * self.pose_fps)
+        pose_end = int(clipose_end_time * self.pose_fps)
 
         audio_start = int(clipose_start_time * self.audio_hz)
         audio_end = int(clipose_end_time * self.audio_hz)
