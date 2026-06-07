@@ -2,6 +2,7 @@
     "project_name": "stage_2_data",
     "pose_fps": 30,
     "audio_sr": 16000,
+    "audio_hz": 50,
     "pose_length": 64,
     "stride": 20, 
     "seed": 42,

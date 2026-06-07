@@ -45,14 +45,12 @@ class LoaderSegmentationData:
     aligned_semantic_values : any = None
     aligned_off_screen_hand_values : any = None
     num_subdivisions : any = None
-    audio_samples_per_frame : any = None
-    audio_chunk_len : any = None
     aligned_conversation_states: any = None
     personality_vector: any = None
 
 
 class SeamlessSegmenter:
-    def __init__(self, dataset : SeamlessDataset, pose_fps=30, audio_sr=16000, pose_length=64, stride=10, seed=42, max_gb=10,
+    def __init__(self, dataset : SeamlessDataset, pose_fps=30, audio_sr=16000, audio_hz=50, pose_length=64, stride=10, seed=42, max_gb=10,
                  clean_first_seconds=0, clean_final_seconds=0, segment_mode='both', 
                  filter_out_of_screen_hands=False, keep_only_high_intensity_blocks=False, vad_padding_in_seconds=0, worker_id=-1,
                  project_name="unknown", keep_listener_backchannel=False, include_stage_2_partner_data=False, 
@@ -66,6 +64,7 @@ class SeamlessSegmenter:
             self.output_path = cache_dir / project_name / f"{dataset_name}" / f"part_{worker_id}"
 
         self.pose_fps = pose_fps
+        self.audio_hz = audio_hz
         self.audio_sr = audio_sr
         self.pose_length = pose_length
         self.stride = stride
@@ -135,6 +134,14 @@ class SeamlessSegmenter:
                     pose_start = i * self.stride
                     pose_end = pose_start + self.pose_length
 
+                    # For audio
+                    start_time = pose_start / self.pose_fps
+                    end_time = pose_end / self.pose_fps
+
+                    audio_start = int(start_time * self.audio_hz) 
+                    audio_end = int(end_time * self.audio_hz)
+                    #
+
                     # Perhaps skip this fragment if it has any offscreen hand values and we set to filter those out
                     if self.filter_out_of_screen_hands:
                         sample_offscreen_hand_values = loader_data.aligned_off_screen_hand_values[pose_start:pose_end]
@@ -159,7 +166,7 @@ class SeamlessSegmenter:
                     sample_pose = loader_data.aligned_pose[pose_start:pose_end]
                     
                     # audio segment
-                    sample_audio = loader_data.aligned_audio[pose_start:pose_end]
+                    sample_audio = loader_data.aligned_audio[audio_start:audio_end]
 
                     # word segment
                     sample_words = loader_data.aligned_words[pose_start:pose_end]
@@ -185,7 +192,7 @@ class SeamlessSegmenter:
                     }
                     if self.include_stage_2_partner_data:
                         entry["partner_seamless_id"] = loader.meta_data.partner_full_id
-                        entry["partner_audio"] = partner_loader_data.aligned_audio[pose_start:pose_end]
+                        entry["partner_audio"] = partner_loader_data.aligned_audio[audio_start:audio_end]
                         entry["conversation_states"] = loader_data.aligned_conversation_states[pose_start:pose_end]
                         entry["social_relationship"] = relationship_id
                         entry["personality_traits"] = loader_data.personality_vector
@@ -220,23 +227,8 @@ class SeamlessSegmenter:
         input_values = self.wav2vec2_processor(audio_data, return_tensors="pt", sampling_rate=16000).input_values.to(device)
         self.hubert_model.to(device)
         with torch.no_grad():
-            # Extract raw hidden state sequence [1, 50Hz_Frames, 1024] or [1, 50Hz_Frames, 768]
-            hidden_states = self.hubert_model(input_values).last_hidden_state
-            
-            # Downproject if using hubert-large (1024) to keep it unified with our 768-dim models
-            if hidden_states.shape[-1] == 1024:
-                projection = torch.nn.Linear(1024, 768).to(device)
-                hidden_states = projection(hidden_states)
-        
-        # Linearly Resample 50Hz Token Timeline to Match 30fps Video Frames Total Count Exactly
-        hidden_states_flipped = hidden_states.swapaxes(-1, -2) # [1, 768, 50Hz_Frames]
-        hubert_resampled = F.interpolate(
-            hidden_states_flipped,
-            size=num_frames_target,
-            mode='linear',
-            align_corners=True
-        ).swapaxes(-1, -2).squeeze(0) # Final shape: [num_frames_target, 768]
-        audio_vectors_30fps = hubert_resampled.cpu().numpy()
+            # Extract raw hidden state sequence [1, 50Hz_Frames, 1024]
+            audio_embeddings = self.hubert_model(input_values).last_hidden_state.cpu().numpy()
 
         # get the lookup table for the bert word vectors
         bert_lookup_table = self._get_bert_transcript(loader.meta_data.transcript)
@@ -251,13 +243,11 @@ class SeamlessSegmenter:
         
         # align the audio and pose
         data.aligned_pose, data.aligned_audio, data.aligned_words, data.aligned_emotion_list, data.aligned_semantic_values, data.aligned_off_screen_hand_values, data.aligned_conversation_states = self._align_data(
-            full_pose, audio_vectors_30fps, word_list, emotion_category_frames, semantic_values_list, loader.meta_data.hand_offscreen, raw_conversation_states
+            full_pose, audio_embeddings, word_list, emotion_category_frames, semantic_values_list, loader.meta_data.hand_offscreen, raw_conversation_states
         )
 
         # see how many 64-frame chunks fit
         data.num_subdivisions = math.floor((len(data.aligned_pose) - self.pose_length) / self.stride) + 1
-        data.audio_samples_per_frame = self.audio_sr / self.pose_fps # how many audio samples represent the duration of one motion frame
-        data.audio_chunk_len = int(self.pose_length * data.audio_samples_per_frame) # chunk sizes for the audio compared_calculate_conversation_states
 
         # personality vector
         data.personality_vector = np.array([
@@ -273,8 +263,8 @@ class SeamlessSegmenter:
         """
         Aligns the motion .npz and audio .wav by finding the shortest common duration 
         """
-        round_seconds_pose = full_pose.shape[0] // self.pose_fps
-        round_seconds_audio = audio_vectors.shape[0] // self.pose_fps
+        round_seconds_pose = full_pose.shape[0] / self.pose_fps
+        round_seconds_audio = audio_vectors.shape[0] / self.audio_hz
 
         round_seconds_common = min(round_seconds_pose, round_seconds_audio)
         
@@ -285,13 +275,16 @@ class SeamlessSegmenter:
         # pose indices
         pose_start = clipose_start_time * self.pose_fps
         pose_end = clipose_end_time * self.pose_fps
+
+        audio_start = int(clipose_start_time * self.audio_hz)
+        audio_end = int(clipose_end_time * self.audio_hz)
         
 
         # slice the arrays to the aligned and cleaned window
         aligned_pose = full_pose[pose_start:pose_end]
         aligned_word_list = word_list[pose_start:pose_end]
         aligned_emotion_list = emotion_list[pose_start:pose_end]
-        aligned_audio = audio_vectors[pose_start:pose_end]
+        aligned_audio = audio_vectors[audio_start:audio_end]
         aligned_semantic_values = semantic_values_list[pose_start:pose_end]
         aligned_off_screen_hand_values = off_screen_hand_values[pose_start:pose_end]
         aligned_conversation_states = raw_conversation_states[pose_start:pose_end]
