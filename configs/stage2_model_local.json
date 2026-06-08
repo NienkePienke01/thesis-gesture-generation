@@ -12,8 +12,8 @@
     },
 
     "data": {
-        "train_lmdb": "cache/training_data/training_data_stage_2_/training_data_stage_2_train",
-        "val_lmdb": "cache/training_data/training_data_stage_2_/training_data_stage_2_val"
+        "train_lmdb": "cache/training_data/training_data_stage_2_/training_data_stage_2__train",
+        "val_lmdb": "cache/training_data/training_data_stage_2_/training_data_stage_2__val"
     },
 
     "model_params": {

@@ -139,10 +139,9 @@ class SeamlessSegmenter:
 
                     # For audio
                     start_time = pose_start / self.pose_fps
-                    end_time = pose_end / self.pose_fps
-
                     audio_start = int(start_time * self.audio_hz) 
-                    audio_end = int(end_time * self.audio_hz)
+                    target_audio_len = math.floor(self.pose_length * (self.audio_hz / self.pose_fps))
+                    audio_end = audio_start + target_audio_len # We do it this way to prevent differnt length audio samples
                     #
 
                     # Perhaps skip this fragment if it has any offscreen hand values and we set to filter those out
@@ -199,7 +198,7 @@ class SeamlessSegmenter:
                         entry["conversation_states"] = loader_data.aligned_conversation_states[pose_start:pose_end]
                         entry["social_relationship"] = relationship_id
                         entry["personality_traits"] = loader_data.personality_vector
-                        entry["partner_pose"] = partner_loader_data.aligned_pose[pose_start:pose_end]
+                        entry["partner_pose"] = partner_loader_data.aligned_pose[pose_start:pose_end].numpy()
                         partner_sample_words = partner_loader_data.aligned_words[pose_start:pose_end]
                         partner_sample_bert = np.array([f["embedding"] for f in partner_sample_words])
                         entry["partner_bert"] = partner_sample_bert
