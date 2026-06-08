@@ -39,7 +39,9 @@ relationship_detail_map = {
 @dataclass
 class LoaderSegmentationData:
     aligned_pose : any = None
-    aligned_audio : any = None
+    aligned_raw_audio : any = None
+    aligned_wav2vec_audio : any = None
+    aligned_hubert_audio : any = None
     aligned_words : any = None
     aligned_emotion_list : any = None
     aligned_semantic_values : any = None
@@ -143,6 +145,10 @@ class SeamlessSegmenter:
                     target_audio_len = math.floor(self.pose_length * (self.audio_hz / self.pose_fps))
                     audio_end = audio_start + target_audio_len # We do it this way to prevent differnt length audio samples
                     #
+                    # For Raw Audio
+                    raw_audio_start = int(start_time * self.audio_sr) 
+                    target_raw_audio_len = math.floor(self.pose_length * (self.audio_sr / self.pose_fps))
+                    raw_audio_end = raw_audio_start + target_raw_audio_len
 
                     # Perhaps skip this fragment if it has any offscreen hand values and we set to filter those out
                     if self.filter_out_of_screen_hands:
@@ -168,7 +174,10 @@ class SeamlessSegmenter:
                     sample_pose = loader_data.aligned_pose[pose_start:pose_end]
                     
                     # audio segment
-                    sample_audio = loader_data.aligned_audio[audio_start:audio_end]
+                    sample_raw_audio = loader_data.aligned_raw_audio[raw_audio_start:raw_audio_end]
+                    sample_wav2vec_audio = loader_data.aligned_wav2vec_audio[audio_start:audio_end]
+                    sample_hubert_audio = loader_data.aligned_hubert_audio[audio_start:audio_end]
+
 
                     # word segment
                     sample_words = loader_data.aligned_words[pose_start:pose_end]
@@ -182,7 +191,9 @@ class SeamlessSegmenter:
                     # storage setup
                     entry = {
                         "pose": sample_pose.numpy(), # pose segment of 129 dimension
-                        "audio": sample_audio, # audio segment
+                        "raw_audio": sample_raw_audio, # audio segment
+                        "wav2vec_audio": sample_wav2vec_audio, # audio segment
+                        "hubert_audio": sample_hubert_audio, # audio segment
                         "bert": sample_bert, # word segments
                         "emotions": sample_emotions, # seamless interaction categories 0-7 mentioned in the helper function
                         "semantic_scores": sample_semantic_values, # semantic values for each frame being 0.0, 0.1 or 1.0
@@ -194,10 +205,15 @@ class SeamlessSegmenter:
                     }
                     if self.include_stage_2_partner_data:
                         entry["partner_seamless_id"] = loader.meta_data.partner_full_id
-                        entry["partner_audio"] = partner_loader_data.aligned_audio[audio_start:audio_end]
+                        entry["partner_raw_audio"] = partner_loader_data.aligned_raw_audio[raw_audio_start:raw_audio_end]
+                        entry["partner_wav2vec_audio"] = partner_loader_data.aligned_wav2vec_audio[audio_start:audio_end]
+                        entry["partner_hubert_audio"] = partner_loader_data.aligned_hubert_audio[audio_start:audio_end]
                         entry["conversation_states"] = loader_data.aligned_conversation_states[pose_start:pose_end]
+                        entry["partner_conversation_states"] = partner_loader_data.aligned_conversation_states[pose_start:pose_end]
                         entry["social_relationship"] = relationship_id
                         entry["personality_traits"] = loader_data.personality_vector
+                        entry["partner_emotions"] = partner_loader_data.aligned_emotion_list[pose_start:pose_end]
+                        entry["partner_personality_traits"] = partner_loader_data.personality_vector
                         entry["partner_pose"] = partner_loader_data.aligned_pose[pose_start:pose_end].numpy()
                         partner_sample_words = partner_loader_data.aligned_words[pose_start:pose_end]
                         partner_sample_bert = np.array([f["embedding"] for f in partner_sample_words])
@@ -226,11 +242,12 @@ class SeamlessSegmenter:
         audio_data, _ = librosa.load(loader.meta_data.audio_file, sr=self.audio_sr)
 
         # Compute Full-Length HuBERT Embeddings
-        input_values = self.wav2vec2_processor(audio_data, return_tensors="pt", sampling_rate=16000).input_values.to(device)
+        wav2vec_values = self.wav2vec2_processor(audio_data, return_tensors="pt", sampling_rate=self.audio_sr).input_values.to(device)
         self.hubert_model.to(device)
         with torch.no_grad():
             # Extract raw hidden state sequence [1, 50Hz_Frames, 1024]
-            audio_embeddings = self.hubert_model(input_values).last_hidden_state.squeeze(0).cpu().numpy()
+            audio_embeddings = self.hubert_model(wav2vec_values).last_hidden_state.squeeze(0).cpu().numpy()
+        wav2vec_data = wav2vec_values.squeeze(0).cpu().numpy()
 
         # get the lookup table for the bert word vectors
         bert_lookup_table = self._get_bert_transcript(loader.meta_data.transcript)
@@ -244,8 +261,8 @@ class SeamlessSegmenter:
         raw_conversation_states = self._calculate_conversation_states(loader, partner_loader)
         
         # align the audio and pose
-        data.aligned_pose, data.aligned_audio, data.aligned_words, data.aligned_emotion_list, data.aligned_semantic_values, data.aligned_off_screen_hand_values, data.aligned_conversation_states = self._align_data(
-            full_pose, audio_embeddings, word_list, emotion_category_frames, semantic_values_list, loader.meta_data.hand_offscreen, raw_conversation_states
+        data.aligned_pose, data.aligned_raw_audio, data.aligned_wav2vec_audio, data.aligned_hubert_audio, data.aligned_words, data.aligned_emotion_list, data.aligned_semantic_values, data.aligned_off_screen_hand_values, data.aligned_conversation_states = self._align_data(
+            full_pose, audio_data, wav2vec_data, audio_embeddings, word_list, emotion_category_frames, semantic_values_list, loader.meta_data.hand_offscreen, raw_conversation_states
         )
 
         # see how many 64-frame chunks fit
@@ -261,12 +278,12 @@ class SeamlessSegmenter:
         ], dtype=np.float32)
         return data
     
-    def _align_data(self, full_pose, audio_vectors, word_list, emotion_list, semantic_values_list, off_screen_hand_values, raw_conversation_states):
+    def _align_data(self, full_pose, raw_audio, wav2vec_audio_vector, hubert_audio_vectors, word_list, emotion_list, semantic_values_list, off_screen_hand_values, raw_conversation_states):
         """
         Aligns the motion .npz and audio .wav by finding the shortest common duration 
         """
         round_seconds_pose = full_pose.shape[0] / self.pose_fps
-        round_seconds_audio = audio_vectors.shape[0] / self.audio_hz
+        round_seconds_audio = hubert_audio_vectors.shape[0] / self.audio_hz
 
         round_seconds_common = min(round_seconds_pose, round_seconds_audio)
         
@@ -280,18 +297,22 @@ class SeamlessSegmenter:
 
         audio_start = int(clipose_start_time * self.audio_hz)
         audio_end = int(clipose_end_time * self.audio_hz)
-        
+
+        raw_audio_start = int(clipose_start_time * self.audio_sr)
+        raw_audio_end = int(clipose_end_time * self.audio_sr)
 
         # slice the arrays to the aligned and cleaned window
         aligned_pose = full_pose[pose_start:pose_end]
         aligned_word_list = word_list[pose_start:pose_end]
         aligned_emotion_list = emotion_list[pose_start:pose_end]
-        aligned_audio = audio_vectors[audio_start:audio_end]
+        aligned_raw_audio = raw_audio[raw_audio_start:raw_audio_end]
+        aligned_wav2vec_audio = wav2vec_audio_vector[audio_start:audio_end]
+        aligned_hubert_audio = hubert_audio_vectors[audio_start:audio_end]
         aligned_semantic_values = semantic_values_list[pose_start:pose_end]
         aligned_off_screen_hand_values = off_screen_hand_values[pose_start:pose_end]
         aligned_conversation_states = raw_conversation_states[pose_start:pose_end]
         
-        return aligned_pose, aligned_audio, aligned_word_list, aligned_emotion_list, aligned_semantic_values, aligned_off_screen_hand_values, aligned_conversation_states
+        return aligned_pose, aligned_raw_audio, aligned_wav2vec_audio, aligned_hubert_audio, aligned_word_list, aligned_emotion_list, aligned_semantic_values, aligned_off_screen_hand_values, aligned_conversation_states
     
     def _get_word_list(self, loader : SeamlessSMPLHLoader, bert_lookup_table : dict):
         """
@@ -508,7 +529,9 @@ def run_worker(worker_id, file_ids, config_data, dataset_path, gpu_id):
             _, raw = cursor.item()
             entry = pickle.loads(raw)
             logger.info(f"{dataset.name} Pose shape: {entry['pose'].shape}") # should be (64, 129)
-            logger.info(f"{dataset.name} Audio shape: {entry['audio'].shape}")
+            logger.info(f"{dataset.name} Raw Audio shape: {entry['raw_audio'].shape}")
+            logger.info(f"{dataset.name} wav2vec Audio shape: {entry['wav2vec_audio'].shape}")
+            logger.info(f"{dataset.name} hubert Audio shape: {entry['hubert_audio'].shape}")
             logger.info(f"{dataset.name} BERT shape: {entry['bert'].shape}") # should be (64, 768)
             logger.info(f"{dataset.name} Emotions shape: {entry['emotions'].shape}")
             logger.info(f"{dataset.name} Semantics shape: {entry['semantic_scores'].shape}")

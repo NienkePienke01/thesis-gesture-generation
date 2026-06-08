@@ -146,6 +146,15 @@ class AutoRegressiveMotionTransformer(nn.Module):
     def get_tgt_mask(self, size, device):
         return torch.triu(torch.ones(size, size, device=device) * float('-inf'), diagonal=1)
 
+    def hubert_encoder_block():
+        return nn.Sequential(
+            nn.Conv1d(1024, 256, 3, 1, 1, bias=False),
+            # nn.GroupNorm(32, 256),
+            nn.BatchNorm1d(256),
+            nn.GELU(),
+            nn.Conv1d(256, 256, 3, 1, 1, bias=False)
+        )
+
     def forward(self, motion_tokens, audio, partner_audio, bert, emotions, social, personality, conversation_state):
 
         B, T, D = motion_tokens.shape

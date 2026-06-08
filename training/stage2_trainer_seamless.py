@@ -138,8 +138,8 @@ class SeamlessStage2Trainer:
         
         logits, _ = self.model(
             motion_tokens=input_tokens,
-            audio=dict_data["audio"].to(self.device), # torch.Size([32, 64, 768])
-            partner_audio=dict_data["partner_audio"].to(self.device),
+            audio=dict_data["hubert_audio"].to(self.device), # torch.Size([32, 64, 768])
+            partner_audio=dict_data["partner_hubert_audio"].to(self.device),
             bert=dict_data["bert"].to(self.device),
             emotions=dict_data["emotions"].to(self.device),
             social=dict_data["social_relationship"].to(self.device),

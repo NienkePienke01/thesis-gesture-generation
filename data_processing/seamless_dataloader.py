@@ -39,17 +39,24 @@ class SeamlessDataLoader(Dataset):
         else:
             output = {
                 "pose": torch.from_numpy(data["pose"]).float(),
-                "audio": torch.from_numpy(data["audio"]).float(),
+                "raw_audio": torch.from_numpy(data["raw_audio"]).float(),
+                "wav2vec_audio": torch.from_numpy(data["wav2vec_audio"]).float(),
+                "hubert_audio": torch.from_numpy(data["hubert_audio"]).float(),
                 "bert": torch.from_numpy(data["bert"]).float(),
                 "full_id": data["seamless_id"],
                 "semantic_scores": torch.from_numpy(data["semantic_scores"]).float(),
-                "partner_audio": torch.from_numpy(data["partner_audio"]).float(),
+                "partner_raw_audio": torch.from_numpy(data["partner_raw_audio"]).float(),
+                "partner_wav2vec_audio": torch.from_numpy(data["partner_wav2vec_audio"]).float(),
+                "partner_hubert_audio": torch.from_numpy(data["partner_hubert_audio"]).float(),
                 "partner_pose": torch.from_numpy(data["partner_pose"]).float(),
                 "partner_bert": torch.from_numpy(data["partner_bert"]).float(),
                 "partner_full_id": data["partner_seamless_id"],
                 "conversation_states": torch.from_numpy(data["conversation_states"]).long(),
+                "partner_conversation_states": torch.from_numpy(data["partner_conversation_states"]).long(),
                 "social_relationship": torch.tensor(data["social_relationship"], dtype=torch.long),
                 "personality_traits": torch.from_numpy(data["personality_traits"]).float(),
+                "partner_personality_traits": torch.from_numpy(data["partner_personality_traits"]).float(),
+                "partner_emotions": torch.from_numpy(data["partner_emotions"]).int(),
                 "emotions": torch.from_numpy(data["emotions"]).int(),
             }
 
