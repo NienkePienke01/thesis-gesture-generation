@@ -8,7 +8,7 @@ import numpy as np
 from pathlib import Path
 from types import SimpleNamespace
 
-from stage_2_models.turn_taking_transformer import TurnTakingTransformer
+from stage_2_models.autoregressive_transformer import AutoRegressiveMotionTransformer
 from training.stage2_trainer_seamless import load_stage_1_checkpoint
 from utils import rotation_conversions as rc
 import data_processing.utils as utils
@@ -38,8 +38,11 @@ def load_stage2_and_stage1_pipeline(stage2_config_path, stage2_checkpoint_path, 
             config_dict = json.load(f)
             
         args = SimpleNamespace(**config_dict)
-        args.model_params = SimpleNamespace(**config_dict["model_params"])
+        args.data = SimpleNamespace(**config_dict["data"])
+        args.training_params = SimpleNamespace(**config_dict["training_params"])
+        args.loss_weights = SimpleNamespace(**config_dict["loss_weights"])
         args.stage_1_pretrain = SimpleNamespace(**config_dict["stage_1_pretrain"])
+        args.model_params = SimpleNamespace(**config_dict["model_params"])
         
         # Load stage 1
         m_s1, stage1_model = load_stage_1_checkpoint(
@@ -49,16 +52,7 @@ def load_stage2_and_stage1_pipeline(stage2_config_path, stage2_checkpoint_path, 
         )
         
         # Load stage 2
-        stage2_model = TurnTakingTransformer(
-            vocab_size=m_s1["code_dim"],
-            d_model=args.model_params.d_model,
-            nhead=args.model_params.nhead,
-            num_layers=args.model_params.num_layers,
-            dim_feedforward=args.model_params.dim_feedforward,
-            dropout=args.model_params.dropout,
-            max_seq_len=args.model_params.max_seq_len,
-            activation=args.model_params.activation
-        ).to(device)
+        stage2_model = AutoRegressiveMotionTransformer(args, vocab_size=args.model_params.code_dim + 1).to(device).to(device)
         
         stage2_model.load_state_dict(torch.load(stage2_checkpoint_path, map_location=device))
         stage2_model.eval()

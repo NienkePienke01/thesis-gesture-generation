@@ -131,7 +131,7 @@ class AutoRegressiveMotionTransformer(nn.Module):
     
         global_condition = self.fused_condition_proj(fused_static_features)
 
-        global_condition, cross_attention_condition = self.apply_cfg_masking(global_condition, conditioned_audio)
+        global_condition, cross_attention_condition = self.apply_cfg_masking(global_condition, conditioned_audio, cond_drop_prob=cond_drop_prob)
 
         # Layer normalisation (based on photo2real)
         cross_attention_condition = self.norm_cond(cross_attention_condition)
