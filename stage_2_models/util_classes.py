@@ -1,6 +1,17 @@
 import torch.nn as nn
 from einops import rearrange
 import torch
+import math
+
+class DecoderLayerStack(nn.Module):
+    def __init__(self, stack):
+        super().__init__()
+        self.stack = stack
+
+    def forward(self, x, cond, t, tgt_mask=None, memory2=None):
+        for layer in self.stack:
+            x = layer(x, cond, t, tgt_mask=tgt_mask, memory2=memory2)
+        return x
 
 class MLP(nn.Module):
     """Standard MLP block used in semtalk"""
@@ -13,6 +24,29 @@ class MLP(nn.Module):
         )
     def forward(self, inputs):
         return self.mlp(inputs)
+
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model: int, dropout: float = 0.1, max_len: int = 1024):
+        super().__init__()
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len).unsqueeze(1)
+        div_term = torch.exp(
+            torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model)
+        )
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+
+        self.register_buffer("pe", pe)
+        self.dropout = nn.Dropout(p=dropout)
+
+    def forward(self, x: torch.Tensor):
+        """
+        :param x: B x T x d_model tensor
+        :return: B x T x d_model tensor
+        """
+        x = x + self.pe[None, : x.shape[1], :]
+        x = self.dropout(x)
+        return x
 
 
 class PeriodicPositionalEncoding(nn.Module):

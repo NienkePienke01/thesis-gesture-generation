@@ -7,6 +7,7 @@ from stage_2_models.autoregressive_transformer import AutoRegressiveMotionTransf
 import json
 import math
 import random
+import torch.nn.functional as F
 
 def load_stage_1_checkpoint(model_path, config_path, device):
     with open(config_path, 'r') as file_reader:
@@ -34,8 +35,9 @@ class SeamlessStage2Trainer:
             self.device
         )
         self.code_dim = model_parameters["code_dim"]
+        self.cfg_drop_prob = args.training_params.cfg_drop_prob
         self.model = AutoRegressiveMotionTransformer(args, vocab_size=model_parameters["code_dim"] + 1).to(self.device)
-        self.model = DDP(self.model, device_ids=[gpu_id])
+        self.model = DDP(self.model, device_ids=[gpu_id], find_unused_parameters=True)
         
         self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=args.training_params.lr_base, weight_decay=1e-2)
         
@@ -55,6 +57,7 @@ class SeamlessStage2Trainer:
         self.scheduler = torch.optim.lr_scheduler.LambdaLR(self.optimizer, learning_rate_lambda)
         self.ce_loss_function = nn.CrossEntropyLoss()
         self.mse_loss_function = nn.MSELoss()
+        self.soft_labels = self._precompute_soft_labels(temperature=args.training_params.soft_label_temperature)
 
     @torch.no_grad()
     def _extract_stage1_tokens(self, target_pose_6d):
@@ -85,6 +88,24 @@ class SeamlessStage2Trainer:
             predicted_latent_out += soft_quantized
 
         return predicted_latent_out
+
+    @torch.no_grad()
+    def _precompute_soft_labels(self, temperature=0.05):
+        soft_label_matrices = []
+        
+        for layer in self.stage1_model.quantizer.layers:
+            # Create the full codebook including the mask
+            mask_embedding = torch.zeros(1, layer.codebook.shape[1], device=layer.codebook.device)
+            codebook_full = torch.cat([layer.codebook, mask_embedding], dim=0) # [Code_dim, D]
+
+            dist_matrix = torch.cdist(codebook_full, codebook_full, p=2) # pairwise Euclidean distances [Code_dim, Code_dim]
+
+            # -dist so closer items get higher probability
+            soft_labels = F.softmax(-dist_matrix / temperature, dim=-1) # Convert to probabilities using Temperature Softmax
+            
+            soft_label_matrices.append(soft_labels)
+            
+        return soft_label_matrices
 
     def _mask_ground_truth_tokens(self, max_mask_prob, step_percentage, input_tokens, mask_token):
         """
@@ -138,13 +159,14 @@ class SeamlessStage2Trainer:
         
         logits, _ = self.model(
             motion_tokens=input_tokens,
-            audio=dict_data["hubert_audio"].to(self.device), # torch.Size([32, 64, 768])
-            partner_audio=dict_data["partner_hubert_audio"].to(self.device),
+            audio=dict_data["wav2vec_audio"].to(self.device), # torch.Size([32, 64, 768])
+            partner_audio=dict_data["partner_wav2vec_audio"].to(self.device),
             bert=dict_data["bert"].to(self.device),
             emotions=dict_data["emotions"].to(self.device),
             social=dict_data["social_relationship"].to(self.device),
             personality=dict_data["personality_traits"].to(self.device),
-            conversation_state=dict_data["conversation_states"].to(self.device)
+            conversation_state=dict_data["conversation_states"].to(self.device),
+            cond_drop_prob=self.cfg_drop_prob
         )
         predicted_latent_vectors = self._compute_predicted_codebook_latent_vector(logits)
         
@@ -153,21 +175,34 @@ class SeamlessStage2Trainer:
         ce_losses_layered = {}
 
         for i in range(logits.shape[-1]):
-            layer_num = i + 1
-            # Reshape for cross-entropy
-            logits_flat = logits[:, :, :, i].reshape(-1, logits.size(2)) # [B*T, vocab_size]
-            targets_flat = target_tokens[:, :, i].reshape(-1) # [B*T]
-            mask_flat = used_mask[:, :, i].reshape(-1) # [B*T]
-    
-            # causal Loss (all tokens)
-            loss = self.ce_loss_function(logits_flat, targets_flat)
-            ce_loss += loss
-            ce_losses_layered[layer_num] = loss.item()
+            layer_num = i
+            layer_display_num = i + 1
+            
+            # Reshape for soft label calculation
+            logits_flat = logits[:, :, :, i].reshape(-1, logits.size(2)) 
+            targets_flat = target_tokens[:, :, i].reshape(-1) 
+            mask_flat = used_mask[:, :, i].reshape(-1) 
+            
+            # get soft label distribution [B*T, vocab_size]
+            target_dist = self.soft_labels[layer_num][targets_flat]
+            
+            # compute log probabilities & soft cross entropy loss
+            log_probs = F.log_softmax(logits_flat, dim=-1)
+            loss_all = -(target_dist * log_probs).sum(dim=-1).mean()
+            
+            # update tracking
+            ce_loss += loss_all
+            ce_losses_layered[layer_display_num] = loss_all.item()
 
-            # Masked Loss (masked tokens only)
+            # masked loss (only for masked tokens)
             if mask_flat.any():
-                masked_loss += self.ce_loss_function(logits_flat[mask_flat], targets_flat[mask_flat])
-    
+                masked_target_dist = target_dist[mask_flat]
+                masked_log_probs = log_probs[mask_flat]
+                masked_loss += -(masked_target_dist * masked_log_probs).sum(dim=-1).mean()
+        
+        ce_loss = ce_loss / logits.shape[-1]
+        masked_loss = masked_loss / logits.shape[-1]
+
         mse_loss = self.mse_loss_function(target_latent_vectors, predicted_latent_vectors)
             
         total_loss = ((ce_loss + masked_loss) * self.args.loss_weights.ce_weight) + (self.args.loss_weights.mse_weight * mse_loss)
@@ -195,13 +230,14 @@ class SeamlessStage2Trainer:
         
         logits, _ = self.model(
             motion_tokens=input_tokens,
-            audio=dict_data["audio"].to(self.device), # torch.Size([32, 64, 768])
-            partner_audio=dict_data["partner_audio"].to(self.device),
+            audio=dict_data["wav2vec_audio"].to(self.device), # torch.Size([32, 64, 768])
+            partner_audio=dict_data["partner_wav2vec_audio"].to(self.device),
             bert=dict_data["bert"].to(self.device),
             emotions=dict_data["emotions"].to(self.device),
             social=dict_data["social_relationship"].to(self.device),
             personality=dict_data["personality_traits"].to(self.device),
-            conversation_state=dict_data["conversation_states"].to(self.device)
+            conversation_state=dict_data["conversation_states"].to(self.device),
+            cond_drop_prob=0.0
         )
         predicted_latent_vectors = self._compute_predicted_codebook_latent_vector(logits)
         
@@ -209,17 +245,25 @@ class SeamlessStage2Trainer:
         ce_losses_layered = {}
 
         for i in range(logits.shape[-1]):
-            layer_num = i + 1
-            current_target = target_tokens[:, :, i] 
+            layer_num = i
+            layer_display_num = i + 1
+            
+            # Reshape for soft label calculation
+            logits_flat = logits[:, :, :, i].reshape(-1, logits.size(2)) 
+            targets_flat = target_tokens[:, :, i].reshape(-1) 
+            
+            # get soft label distribution [B*T, vocab_size]
+            target_dist = self.soft_labels[layer_num][targets_flat]
+            
+            # compute log probabilities & soft cross entropy loss
+            log_probs = F.log_softmax(logits_flat, dim=-1)
+            loss_all = -(target_dist * log_probs).sum(dim=-1).mean()
+            
+            # update tracking
+            ce_loss += loss_all
+            ce_losses_layered[layer_display_num] = loss_all.item()
 
-            loss = self.ce_loss_function(
-                logits[:, :, :, i].reshape(-1, logits.size(2)), 
-                current_target.reshape(-1)
-            )
-
-            ce_losses_layered[layer_num] = loss.item()
-            ce_loss += loss
-    
+        ce_loss = ce_loss / logits.shape[-1]
         mse_loss = self.mse_loss_function(target_latent_vectors, predicted_latent_vectors)
         
         total_loss = ce_loss + (self.args.loss_weights.mse_weight * mse_loss)
