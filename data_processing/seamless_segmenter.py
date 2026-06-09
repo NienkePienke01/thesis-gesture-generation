@@ -8,7 +8,7 @@ from pathlib import Path
 from loguru import logger
 from .seamless_dataset import SeamlessDataset
 from .utils import SeamlessSMPLHLoader
-from transformers import AutoTokenizer, BertModel, Wav2Vec2Processor, HubertModel
+from transformers import AutoTokenizer, BertModel, Wav2Vec2Processor, HubertModel, Wav2Vec2Model
 import torch.nn.functional as F
 import json
 import argparse
@@ -93,6 +93,8 @@ class SeamlessSegmenter:
 
         self.wav2vec2_processor = Wav2Vec2Processor.from_pretrained("facebook/hubert-large-ls960-ft")
         self.hubert_model = HubertModel.from_pretrained("facebook/hubert-large-ls960-ft").eval()
+
+        self.wav2vec2_model = Wav2Vec2Model.from_pretrained("facebook/wav2vec2-large-960h").eval()
 
     def build_cache(self):
         """Processes all interactions in a given seamless interaction dataset and writes the segments to LMDB."""
@@ -242,12 +244,16 @@ class SeamlessSegmenter:
         audio_data, _ = librosa.load(loader.meta_data.audio_file, sr=self.audio_sr)
 
         # Compute Full-Length HuBERT Embeddings
-        wav2vec_values = self.wav2vec2_processor(audio_data, return_tensors="pt", sampling_rate=self.audio_sr).input_values.to(device)
+        audio_model_input = self.wav2vec2_processor(audio_data, return_tensors="pt", sampling_rate=self.audio_sr).input_values.to(device)
         self.hubert_model.to(device)
         with torch.no_grad():
             # Extract raw hidden state sequence [1, 50Hz_Frames, 1024]
-            audio_embeddings = self.hubert_model(wav2vec_values).last_hidden_state.squeeze(0).cpu().numpy()
-        wav2vec_data = wav2vec_values.squeeze(0).cpu().numpy()
+            audio_embeddings = self.hubert_model(audio_model_input).last_hidden_state.squeeze(0).cpu().numpy()
+
+        # Compute the wav2vec embeddings
+        self.wav2vec2_model.to(device)
+        with torch.no_grad():
+            wav2vec_data = self.wav2vec2_model(audio_model_input).last_hidden_state.squeeze(0).cpu().numpy() # [1, 50Hz_Frames, 1024]
 
         # get the lookup table for the bert word vectors
         bert_lookup_table = self._get_bert_transcript(loader.meta_data.transcript)
