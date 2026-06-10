@@ -87,13 +87,17 @@ def load_stage2_and_stage1_pipeline(stage2_config_path, stage2_checkpoint_path, 
     except Exception as e:
         return f"Status: Framework loading failure - {str(e)}"
 
-def get_loop_variables(chunk_frames, num_frames, stride, batch_size, full_body_joint_count):
+def get_loop_variables(device, chunk_frames, num_frames, stride, batch_size, full_body_joint_count):
     num_chunks = math.floor((num_frames - chunk_frames) / stride) + 1
     
     valid_frames = (num_chunks - 1) * stride + chunk_frames
     pre_frames = chunk_frames - stride
 
-    return chunk_frames, stride, num_chunks, full_body_joint_count, batch_size, valid_frames, pre_frames
+    weight_mask = torch.zeros((batch_size, valid_frames, 1, 1), device=device)
+    fade_in = torch.linspace(0.0, 1.0, steps=pre_frames, device=device).view(1, -1, 1, 1)
+    fade_out = torch.linspace(1.0, 0.0, steps=pre_frames, device=device).view(1, -1, 1, 1)
+
+    return chunk_frames, stride, num_chunks, full_body_joint_count, batch_size, valid_frames, pre_frames, weight_mask, fade_in, fade_out
 
 def setup_reconstruction(target_npz_path, device):
     if _stage2_runtime_cache["stage1_model"] is None or _stage2_runtime_cache["stage2_model"] is None or _stage2_runtime_cache["segmenter"] is None:
@@ -122,14 +126,11 @@ def setup_reconstruction(target_npz_path, device):
     relationship = get_relationship_id(original_loader)
     
     num_frames = segment_data.aligned_pose.shape[0]
-    chunk_frames, stride, num_chunks, full_body_joint_count, batch_size, valid_frames, pre_frames = get_loop_variables(64, num_frames, 
+    chunk_frames, stride, num_chunks, full_body_joint_count, batch_size, valid_frames, pre_frames, weight_mask, fade_in, fade_out = get_loop_variables(device, 64, num_frames, 
                                                                                                                        _stage2_runtime_cache["stage1_model"].downsample_factor,
                                                                                                                        1, 43)
 
     final_reconstructed_6d = torch.zeros((batch_size, valid_frames, full_body_joint_count, 6), device=device)
-    weight_mask = torch.zeros((batch_size, valid_frames, 1, 1), device=device)
-    fade_in = torch.linspace(0.0, 1.0, steps=pre_frames, device=device).view(1, -1, 1, 1)
-    fade_out = torch.linspace(1.0, 0.0, steps=pre_frames, device=device).view(1, -1, 1, 1)
     
     return (original_loader, segment_data, chunk_frames, stride, num_chunks, 
             full_body_joint_count, batch_size, valid_frames, pre_frames, 
@@ -250,7 +251,7 @@ def reconstruct_and_render(target_npz_file, device, top_k, top_p, temperature, p
 
     # Update the variables since we use a different stride now
     num_frames = segment_data.aligned_pose.shape[0]
-    chunk_frames, stride, num_chunks, full_body_joint_count, batch_size, valid_frames, pre_frames = get_loop_variables(64, num_frames, 
+    chunk_frames, stride, num_chunks, full_body_joint_count, batch_size, valid_frames, pre_frames, weight_mask, fade_in, fade_out = get_loop_variables(device, 64, num_frames, 
                                                                                                                        20,
                                                                                                                        1, 43)
     downsample_factor =  _stage2_runtime_cache["stage1_model"].downsample_factor
