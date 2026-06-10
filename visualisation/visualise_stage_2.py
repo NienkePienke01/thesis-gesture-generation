@@ -162,13 +162,17 @@ def generate_motion_sequence(device, segment_data, partner_segment_data, chunk_f
     final_amount_of_tokens = segment_data.aligned_pose.shape[0] // downsample_factor
     generated_tokens = torch.full((batch_size, final_amount_of_tokens, downsample_factor), code_dim, dtype=torch.long, device=device) # [1, 16, 4] for example
     chunk_codes = (chunk_frames // downsample_factor)
+    # Prepare the features
+    segment_data.aligned_wav2vec_audio = torch.from_numpy(segment_data.aligned_wav2vec_audio).float()
+    segment_data.personality_vector = torch.from_numpy(segment_data.personality_vector).float()
+    personality_input = segment_data.personality_vector.unsqueeze(0)
+    #
     with torch.no_grad():
         model = _stage2_runtime_cache["stage2_model"]
         generated_tokens[:, 0, :] = torch.randint(0, code_dim, (batch_size, 1, 4), device=device) # Set the first token to a random seed token
         # Generate the initial 15 frames for the first chunk
         for j in range(1, chunk_codes):
             audio_input = segment_data.aligned_wav2vec_audio[0:chunk_frames].unsqueeze(0)
-            personality_input = segment_data.personality_vector.unsqueeze(0)
             # Slice the 15-token input context window (unpredicted tokens remain masked as code_dim)
             tokens_input = generated_tokens[:, 0:chunk_codes - 1, :]
             logits, _ = model(
@@ -199,7 +203,6 @@ def generate_motion_sequence(device, segment_data, partner_segment_data, chunk_f
             # Slice exactly 15 tokens for the input window to match training shapes
             tokens_input = generated_tokens[:, start_frame//downsample_factor : (end_frame//downsample_factor) - 1, :]
             audio_input = segment_data.aligned_wav2vec_audio[start_frame:end_frame].unsqueeze(0) # Unsqueeze to add batch dimension
-            personality_input = segment_data.personality_vector.unsqueeze(0)
 
             logits, _ = model(
                 motion_tokens=tokens_input,
