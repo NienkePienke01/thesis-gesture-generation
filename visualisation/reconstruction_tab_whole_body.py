@@ -161,8 +161,8 @@ def render_full_body_reconstruction_tab(device):
     with gr.TabItem("Stage 1: Reconstruction"):
         gr.Markdown("### 1. Upload Model Files")
         with gr.Row():
-            full_config = create_file_browser("Full Body Config (.json)", extensions=[".json"], file_count="single")
-            full_body_checkpoint = create_file_browser("Full Body Checkpoint (.bin)", extensions=[".bin"], file_count="single")
+            full_config = create_file_browser("Full Body Config (.json)", extensions=[".json"], file_count="single", default_value="configs/stage1_new_dyadit_model_attempt.json")
+            full_body_checkpoint = create_file_browser("Full Body Checkpoint (.bin)", extensions=[".bin"], file_count="single", default_value="checkpoints/stage1_new_dyadit_model_attempt/20260519_0207/model_final_epoch_799_val_loss_0.03552431985735893.bin")
         
         load_model_button = gr.Button("Initialize Stage 1 model")
         status_markdown = gr.Markdown("Status: Waiting for model...")

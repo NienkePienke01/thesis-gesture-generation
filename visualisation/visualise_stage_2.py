@@ -15,6 +15,7 @@ import data_processing.utils as utils
 from data_processing.seamless_segmenter import SeamlessSegmenter, get_relationship_id
 from data_processing.seamless_segmenter import relationship_detail_map
 from visualisation.file_browser import create_file_browser
+import visualisation.reconstruction_tab_whole_body as stage_1_reconstruction
 
 os.environ['PYOPENGL_PLATFORM'] = 'egl'
 os.environ['TOKENIZERS_PARALLELISM'] = 'false'
@@ -86,6 +87,54 @@ def load_stage2_and_stage1_pipeline(stage2_config_path, stage2_checkpoint_path, 
     except Exception as e:
         return f"Status: Framework loading failure - {str(e)}"
 
+def get_loop_variables(chunk_frames, num_frames, stride, batch_size, full_body_joint_count):
+    num_chunks = math.floor((num_frames - chunk_frames) / stride) + 1
+    
+    valid_frames = (num_chunks - 1) * stride + chunk_frames
+    pre_frames = chunk_frames - stride
+
+    return chunk_frames, stride, num_chunks, full_body_joint_count, batch_size, valid_frames, pre_frames
+
+def setup_reconstruction(target_npz_path, device):
+    if _stage2_runtime_cache["stage1_model"] is None or _stage2_runtime_cache["stage2_model"] is None or _stage2_runtime_cache["segmenter"] is None:
+        return None, "Status: Please load the model(s) and segmenter first."
+
+    segmenter = _stage2_runtime_cache["segmenter"]
+
+    original_loader = utils.SeamlessSMPLHLoader(target_npz_path, device=device)
+    # Initialize asset dataset and loaders
+    original_loader = utils.SeamlessSMPLHLoader(target_npz_path, device=device, with_meta_data=True, load_vertices=True)
+    partner_loader = None
+    if original_loader.meta_data and original_loader.meta_data.partner_full_id:
+        search_root = Path(target_npz_path).parents[2]
+        disk_map = {path.stem: str(path.absolute()) for path in search_root.rglob("*.npz")}
+        partner_path = disk_map.get(original_loader.meta_data.partner_full_id)
+        if partner_path:
+            partner_loader = utils.SeamlessSMPLHLoader(partner_path, device=device, with_meta_data=True, load_vertices=False)
+    
+    # Get the aligned data from the segmenter (still in full shape all frames together)
+    segment_data = segmenter._get_loader_segmentation_data(original_loader, partner_loader)
+    partner_segment_data = None
+    if partner_loader is not None:
+        partner_segment_data = segmenter._get_loader_segmentation_data(partner_loader, original_loader)
+    else:
+        print("\nWARNING: PARTNER WAS NOT FOUND! USING ZERO DATA FOR PARTNER AUDIO\n")
+    relationship = get_relationship_id(original_loader)
+    
+    num_frames = segment_data.aligned_pose.shape[0]
+    chunk_frames, stride, num_chunks, full_body_joint_count, batch_size, valid_frames, pre_frames = get_loop_variables(64, num_frames, 
+                                                                                                                       _stage2_runtime_cache["stage1_model"].downsample_factor,
+                                                                                                                       1, 43)
+
+    final_reconstructed_6d = torch.zeros((batch_size, valid_frames, full_body_joint_count, 6), device=device)
+    weight_mask = torch.zeros((batch_size, valid_frames, 1, 1), device=device)
+    fade_in = torch.linspace(0.0, 1.0, steps=pre_frames, device=device).view(1, -1, 1, 1)
+    fade_out = torch.linspace(1.0, 0.0, steps=pre_frames, device=device).view(1, -1, 1, 1)
+    
+    return (original_loader, segment_data, chunk_frames, stride, num_chunks, 
+            full_body_joint_count, batch_size, valid_frames, pre_frames, 
+            final_reconstructed_6d, weight_mask, fade_in, fade_out, partner_segment_data)
+
 def sample_top_p_k(logits, top_k=50, top_p=0.9, temperature=1.0):
     logits = logits / max(temperature, 1e-5)
     
@@ -107,213 +156,111 @@ def sample_top_p_k(logits, top_k=50, top_p=0.9, temperature=1.0):
     probs = F.softmax(logits, dim=-1)
     return torch.multinomial(probs, num_samples=1)
 
-@torch.no_grad()
-def generate_stage2_tokens(target_npz_path, device_str, top_k, top_p, temperature, progress=gr.Progress()):
-    """
-    Processes multimodal input features and autoregressively generates discrete 
-    gesture codebook tokens frame-by-frame using the Stage 2 model.
-    """
-    stage2_model = _stage2_runtime_cache["stage2_model"]
-    stage1_model = _stage2_runtime_cache["stage1_model"]
-    segmenter = _stage2_runtime_cache["segmenter"]
-    
-    if stage2_model is None or stage1_model is None or segmenter is None:
-        raise ValueError("Please initialize the models first using step 1.")
-
-    device = torch.device(device_str)
-    progress(0.1, desc="Extracting features using Seamless Segmenter...")
-    
-    # Initialize asset dataset and loaders
-    original_loader = utils.SeamlessSMPLHLoader(target_npz_path, device=device, with_meta_data=True, load_vertices=True)
-    partner_loader = None
-    if original_loader.meta_data and original_loader.meta_data.partner_full_id:
-        search_root = Path(target_npz_path).parents[2]
-        disk_map = {path.stem: str(path.absolute()) for path in search_root.rglob("*.npz")}
-        
-        partner_path = disk_map.get(original_loader.meta_data.partner_full_id)
-        if partner_path:
-            partner_loader = utils.SeamlessSMPLHLoader(partner_path, device=device, with_meta_data=True, load_vertices=False)
-
-    segment_data = segmenter._get_loader_segmentation_data(original_loader, partner_loader)
-    
-    if partner_loader is not None:
-        partner_segment_data = segmenter._get_loader_segmentation_data(partner_loader, original_loader)
-        partner_audio_features = torch.from_numpy(partner_segment_data.aligned_audio).unsqueeze(0).to(device).float()
-    else:
-        print("\nWARNING: PARTNER WAS NOT FOUND! USING ZERO DATA FOR PARTNER AUDIO\n")
-    
-    relationship = get_relationship_id(original_loader)
-    
-    total_token_frames = agent_audio_downsampled.shape[1]
-    max_sequence_length = _stage2_runtime_cache["max_seq_len"]
-
-    # Extract global ground truth tokens for window extraction reference
-    target_pose = segment_data.aligned_pose
-    batch_size_gt = 1
-    frames_gt = target_pose.shape[0]
-    target_pose_matrix = rc.axis_angle_to_matrix(target_pose.reshape(batch_size_gt, frames_gt, 43, 3))
-    gt_pose_6d = rc.matrix_to_rotation_6d(target_pose_matrix).reshape(batch_size_gt, frames_gt, 258).to(device)
-    
-    # Ground truth tokens extraction -> Shape: (B, T_down, 4)
-    gt_tokens = stage1_model.encode(gt_pose_6d)
-    
-    generated_tokens = torch.zeros((1, total_token_frames, 4), dtype=torch.long, device=device)
-    
-    total_eval_frames = 0
-    match_counts = [0, 0, 0, 0]
-    strict_hit_count = 0
-    
-    # Sliding window token generation loop
-    for t in range(1, total_token_frames):
-        if t % 20 == 0:
-            progress(0.1 + 0.5 * (t / total_token_frames), desc=f"Evaluating: Frame {t}/{total_token_frames}")
-        
-        window_start = max(0, t - (max_sequence_length - 1))
-        
-        past_motion_window = gt_tokens[:, window_start:t, :]
-        
-        conversation_states_window = conversation_states_downsampled[:, window_start:t+1]
-        emotion_categories_window = emotion_categories_downsampled[:, window_start:t+1]
-        agent_audio_window = agent_audio_downsampled[:, window_start:t+1]
-        partner_audio_window = partner_audio_downsampled[:, window_start:t+1]
-        bert_text_window = bert_text_downsampled[:, window_start:t+1]
-        
-        prediction_logits, _ = stage2_model(
-            past_motion_codes=past_motion_window,
-            vad_integers=conversation_states_window,
-            emotion_categories=emotion_categories_window,
-            social_relationship=social_relationship,
-            personality_traits=personality_traits,
-            audio_features=agent_audio_window,
-            partner_audio_features=partner_audio_window,
-            bert_features=bert_text_window
-        )
-        
-        next_frame_logits = prediction_logits[:, -1, :, :]
-        
-        for layer_idx in range(4):
-            logits_layer = next_frame_logits[0, layer_idx, :]
-            sampled_id = torch.argmax(logits_layer, dim=-1, keepdim=True)
-            generated_tokens[0, t, layer_idx] = sampled_id.squeeze(-1)
-
-    # Model perfomance evaluation
-    print("\n" + "="*50)
-    print("      STAGE 2 64-FRAME SLIDING WINDOW EVALUATION")
-    print("="*50)
-    print(f"Evaluating across independent window segments ({total_eval_frames} total predicted steps):")
-    for layer_idx in range(4):
-        layer_acc = (match_counts[layer_idx] / total_eval_frames) * 100.0
-        print(f"  -> Codebook Depth {layer_idx + 1} Match Accuracy: {layer_acc:.2f}% ({match_counts[layer_idx]}/{total_eval_frames})")
-    print(f"  -> Absolute Sequence Frame Hit Rate (Strict Match): {(strict_hit_count / total_eval_frames) * 100.0:.2f}%")
-    print("="*50 + "\n")
-
-    return generated_tokens, original_loader
-
-@torch.no_grad()
-def decode_stage1_motion(generated_tokens, original_loader, target_npz_path, device_str, progress=gr.Progress()):
-    """
-    Decodes discrete tokens back into continuous SMPL-H motion data using Stage 1,
-    then updates the loader asset and runs the comparison video renderer.
-    """
-    stage1_model = _stage2_runtime_cache["stage1_model"]
-    segmenter = _stage2_runtime_cache["segmenter"]
-    downsample_factor = _stage2_runtime_cache["downsample_factor"]
-    
-    device = torch.device(device_str)
-    total_token_frames = generated_tokens.shape[1]
-    
-    progress(0.6, desc="Decoding token tracks via Stage 1 windowed chunks...")
-    
-    native_chunk_frames = segmenter.pose_length
-    native_stride = segmenter.stride
-    native_pre_frames = native_chunk_frames - native_stride
-    
-    token_chunk_frames = native_chunk_frames // downsample_factor
-    token_stride = native_stride // downsample_factor
-    
-    num_chunks = math.floor((total_token_frames - token_chunk_frames) / token_stride) + 1
-    native_valid_frames = (num_chunks - 1) * native_stride + native_chunk_frames
-    
-    full_body_joint_count = 43
-    batch_size = 1
-    
-    final_reconstructed_6d = torch.zeros((batch_size, native_valid_frames, full_body_joint_count, 6), device=device)
-    weight_mask = torch.zeros((batch_size, native_valid_frames, 1, 1), device=device)
-    fade_in_native = torch.linspace(0.0, 1.0, steps=native_pre_frames, device=device).view(1, -1, 1, 1)
-    fade_out_native = torch.linspace(1.0, 0.0, steps=native_pre_frames, device=device).view(1, -1, 1, 1)
-    
-    latent_last = None
-    
-    for i in range(num_chunks):
-        start_native_frame = i * native_stride
-        end_native_frame = start_native_frame + native_chunk_frames
-        
-        start_token_frame = i * token_stride
-        end_token_frame = start_token_frame + token_chunk_frames
-        chunk_tokens = generated_tokens[:, start_token_frame:end_token_frame, :]
-        
-        decoded_pose_6d = stage1_model.decode(chunk_tokens)
-        decoded_pose_6d = decoded_pose_6d.reshape(batch_size, native_chunk_frames, full_body_joint_count, 6)
-        
-        if i > 0 and latent_last is not None:
-            decoded_pose_6d[:, :native_pre_frames, :, :] = latent_last[:, -native_pre_frames:, :, :]
+def generate_motion_sequence(device, segment_data, partner_segment_data, chunk_frames, stride, num_chunks, batch_size, temperature=1.0, top_p=0.90, top_k=50):
+    downsample_factor =  _stage2_runtime_cache["stage1_model"].downsample_factor
+    code_dim = _stage2_runtime_cache["stage1_model"].categories
+    final_amount_of_tokens = segment_data.aligned_pose.shape[0] // downsample_factor
+    generated_tokens = torch.full((batch_size, final_amount_of_tokens, downsample_factor), code_dim, dtype=torch.long, device=device) # [1, 16, 4] for example
+    chunk_codes = (chunk_frames // downsample_factor)
+    with torch.no_grad():
+        model = _stage2_runtime_cache["stage2_model"]
+        generated_tokens[:, 0, :] = torch.randint(0, code_dim, (batch_size, 1, 4), device=device) # Set the first token to a random seed token
+        # Generate the initial 15 frames for the first chunk
+        for j in range(1, chunk_codes):
+            audio_input = segment_data.aligned_wav2vec_audio[0:chunk_frames].unsqueeze(0)
+            personality_input = segment_data.personality_vector.unsqueeze(0)
+            # Slice the 15-token input context window (unpredicted tokens remain masked as code_dim)
+            tokens_input = generated_tokens[:, 0:chunk_codes - 1, :]
+            logits, _ = model(
+                motion_tokens=tokens_input,
+                audio=audio_input,
+                partner_audio=None, bert=None, emotions=None, social=None, conversation_state=None,
+                personality=personality_input,
+                cond_drop_prob=0.0
+            )
             
-        reconstructed_matrix_chunk = rc.rotation_6d_to_matrix(decoded_pose_6d)
-        decoded_pose_6d = rc.matrix_to_rotation_6d(reconstructed_matrix_chunk)
-        latent_last = decoded_pose_6d.clone()
-        
-        chunk_weight = torch.ones((batch_size, native_chunk_frames, full_body_joint_count, 6), device=device)
-        
-        if i > 0:
-            chunk_weight[:, :native_pre_frames, :, :] *= fade_in_native
-        if i < num_chunks - 1:
-            chunk_weight[:, -native_pre_frames:, :, :] *= fade_out_native
+            # Grab logits at index j-1 to predict the token at index j
+            next_frame_logits = logits[:, j - 1, :, :]
             
-        final_reconstructed_6d[:, start_native_frame:end_native_frame] += decoded_pose_6d * chunk_weight
-        weight_mask[:, start_native_frame:end_native_frame] += chunk_weight[:, :, :1, :1]
-    
-    final_reconstructed_6d = final_reconstructed_6d / (weight_mask + 1e-8)
-    reconstructed_matrix = rc.rotation_6d_to_matrix(final_reconstructed_6d)
-    final_reconstructed_pose = rc.matrix_to_axis_angle(reconstructed_matrix).reshape(batch_size * native_valid_frames, -1)
-    
-    reconstructed_loader = utils.SeamlessSMPLHLoader(target_npz_path, device=device, with_meta_data=False, load_vertices=False)
-    reconstructed_loader.overwrite_with_reconstructed_pose(final_reconstructed_pose)
-    
-    progress(0.9, desc="Rendering comparative animation window video...")
-    output_video_path = utils.generate_reconstruction_comparison_video(original_loader, reconstructed_loader, progress=progress, use_cache=False)
-    
-    return output_video_path, "Status: Generation and Rendering Complete!"
+            next_frame_tokens = []
+            for layer_idx in range(4):
+                layer_logits = next_frame_logits[:, :, layer_idx]
+                sampled_token = torch.argmax(layer_logits, dim=-1, keepdim=True)
+                next_frame_tokens.append(sampled_token)
+                
+            next_frame_tensor = torch.stack(next_frame_tokens, dim=-1).squeeze(1)
+            generated_tokens[:, j, :] = next_frame_tensor
 
-@torch.no_grad()
-def run_autoregressive_generation_pipeline(target_npz_path, device_str, top_k, top_p, temperature, progress=gr.Progress()):
-    """
-    Unified orchestration pipeline that executes Stage 2 token generation 
-    followed immediately by Stage 1 motion decoding.
-    """
-    # Run Stage 2 Generate tokens from inputs
-    generated_tokens, original_loader = generate_stage2_tokens(
-        target_npz_path=target_npz_path,
-        device_str=device_str,
-        top_k=top_k,
-        top_p=top_p,
-        temperature=temperature,
-        progress=progress
-    )
-    
-    # Check if models were uninitialized and returned None
-    if generated_tokens is None:
-        return None, original_loader  # Contains the error status string
+        # Run the autoregressive loop
+        for i in range(num_chunks):
+            start_frame = i * stride
+            end_frame = start_frame + chunk_frames
 
-    # Run Stage 1 Decode tokens into motion and render video
-    output_video_path, status_msg = decode_stage1_motion(
-        generated_tokens=generated_tokens,
-        original_loader=original_loader,
-        target_npz_path=target_npz_path,
-        device_str=device_str,
-        progress=progress
+            # Slice exactly 15 tokens for the input window to match training shapes
+            tokens_input = generated_tokens[:, start_frame//downsample_factor : (end_frame//downsample_factor) - 1, :]
+            audio_input = segment_data.aligned_wav2vec_audio[start_frame:end_frame].unsqueeze(0) # Unsqueeze to add batch dimension
+            personality_input = segment_data.personality_vector.unsqueeze(0)
+
+            logits, _ = model(
+                motion_tokens=tokens_input,
+                audio=audio_input,
+                partner_audio=None,
+                bert=None, emotions=None, social=None, conversation_state=None,
+                personality=personality_input,
+                cond_drop_prob=0.0
+            )
+
+            next_frame_logits = logits[:, -1, :, :] # Grab the just generated motion code (last one in the sequence)
+            
+            next_frame_tokens = []
+            # Sample each codebook layer hierarchically for this frame
+            for layer_idx in range(4):
+                layer_logits = next_frame_logits[:, :, layer_idx] # Shape: [B, vocab_size]
+                
+                sampled_token = torch.argmax(layer_logits, dim=-1, keepdim=True)
+                # sampled_token = sample_top_p_k(layer_logits, top_p=top_p, temperature=temperature) # Shape: [B, 1]
+                next_frame_tokens.append(sampled_token)
+                
+            next_frame_tensor = torch.stack(next_frame_tokens, dim=-1).squeeze(1) # Shape: [B, 4]
+            
+            # Assign the brand new frame directly into the pre-allocated token history
+            target_idx = (end_frame // downsample_factor) - 1
+            if target_idx < final_amount_of_tokens:
+                generated_tokens[:, target_idx, :] = next_frame_tensor
+    return generated_tokens
+
+def reconstruct_and_render(target_npz_file, device, top_k, top_p, temperature, progress=gr.Progress()):
+    setup_data = setup_reconstruction(target_npz_file, device)
+    if isinstance(setup_data, tuple) and len(setup_data) == 2: # for if the model is not loaded
+        return setup_data
+        
+    (original_loader, segment_data, chunk_frames, stride, num_chunks, 
+        full_body_joint_count, batch_size, valid_frames, pre_frames, 
+        final_reconstructed_6d, weight_mask, fade_in, fade_out, partner_segment_data) = setup_data # unpack setup_data
+
+    pose_codes = generate_motion_sequence(
+        device, 
+        segment_data, partner_segment_data, 
+        chunk_frames, stride, num_chunks, batch_size, 
+        temperature=temperature, top_p=top_p, top_k=top_k
     )
-    
-    return output_video_path, status_msg
+
+    # Update the variables since we use a different stride now
+    num_frames = segment_data.aligned_pose.shape[0]
+    chunk_frames, stride, num_chunks, full_body_joint_count, batch_size, valid_frames, pre_frames = get_loop_variables(64, num_frames, 
+                                                                                                                       20,
+                                                                                                                       1, 43)
+
+    final_6d_pose = stage_1_reconstruction.decode_sequence(
+        device, pose_codes, chunk_frames, stride, num_chunks, 
+        full_body_joint_count, batch_size, pre_frames, 
+        final_reconstructed_6d, weight_mask, fade_in, fade_out
+    )
+
+    return stage_1_reconstruction.visualize_reconstruction(
+        target_npz_file, device, batch_size, valid_frames, 
+        final_6d_pose, original_loader, progress
+    )
 
 def render_stage2_generation_tab(device):
     with gr.TabItem("Stage 2: Audio Gesture Generation"):
@@ -347,7 +294,7 @@ def render_stage2_generation_tab(device):
         )
         
         generate_gesture_btn.click(
-            fn=run_autoregressive_generation_pipeline,
+            fn=reconstruct_and_render,
             inputs=[target_npz_file, gr.State(device), top_k, top_p, temperature],
             outputs=[output_video_component, pipeline_status]
         )
