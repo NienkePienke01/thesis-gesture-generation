@@ -36,6 +36,11 @@ relationship_detail_map = {
     "family-generic": 10
 }
 
+def get_relationship_id(loader):
+    detail_str = str(loader.meta_data.relationship_detail).lower().strip()
+    relationship_id = relationship_detail_map.get(detail_str, 0)
+    return relationship_id
+
 @dataclass
 class LoaderSegmentationData:
     aligned_pose : any = None

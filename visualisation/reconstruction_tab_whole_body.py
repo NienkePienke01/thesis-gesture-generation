@@ -49,22 +49,21 @@ def load_model_from_files(full_config, full_body_checkpoint, device):
     except Exception as e:
         return f"Status: Error loading model - {str(e)}"
 
-def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
+def setup_reconstruction(target_npz_file, device):
     if _stage1_model_cache["full_body_model"] is None:
         return None, "Status: Please load the model first."
 
     original_loader = utils.SeamlessSMPLHLoader(target_npz_file, device=device)
-    full_pose_sequence = original_loader.get_trainable_pose().to(device) # Shape: [Total_Frames, 129]
+    full_pose_sequence = original_loader.get_trainable_pose().to(device)
     
     chunk_frames = 64
     stride = 20
     num_frames = full_pose_sequence.shape[0]
     num_chunks = math.floor((num_frames - chunk_frames) / stride) + 1
     full_body_joint_count = 43
-    batch_size = 1 # We do not batch here, so its just hard set to 1
-    #
+    batch_size = 1
+    
     valid_frames = (num_chunks - 1) * stride + chunk_frames
-    latent_last = None
     pre_frames = chunk_frames - stride
 
     final_reconstructed_6d = torch.zeros((batch_size, valid_frames, full_body_joint_count, 6), device=device)
@@ -72,33 +71,42 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
     fade_in = torch.linspace(0.0, 1.0, steps=pre_frames, device=device).view(1, -1, 1, 1)
     fade_out = torch.linspace(1.0, 0.0, steps=pre_frames, device=device).view(1, -1, 1, 1)
     
+    return (original_loader, full_pose_sequence, chunk_frames, stride, num_chunks, 
+            full_body_joint_count, batch_size, valid_frames, pre_frames, 
+            final_reconstructed_6d, weight_mask, fade_in, fade_out)
+
+def encode_sequence(full_pose_sequence, chunk_frames, stride, num_chunks, full_body_joint_count, batch_size):
+    encoded_poses = []
     with torch.no_grad():
         model = _stage1_model_cache["full_body_model"]
         for i in range(num_chunks):
             start_frame = i * stride
             end_frame = start_frame + chunk_frames
-            chunk_tensor = full_pose_sequence[start_frame:end_frame].unsqueeze(0) # Shape: [1, chunk_frames, 129]
+            chunk_tensor = full_pose_sequence[start_frame:end_frame].unsqueeze(0)
             
-            # Full body
             full_body_target_pose = chunk_tensor
             full_body_target_pose_matrix = rc.axis_angle_to_matrix(full_body_target_pose.reshape(batch_size, chunk_frames, full_body_joint_count, 3))
             full_body_target_pose_6d = rc.matrix_to_rotation_6d(full_body_target_pose_matrix).reshape(batch_size, chunk_frames, full_body_joint_count * 6)
             
-            if i > 0 and latent_last is not None:
-                # Seed the start of the current input with the end of the previous output
-                full_body_target_pose_6d[:, :pre_frames, :] = latent_last[:, -pre_frames:, :]
+            encoded_pose = model.encode(full_body_target_pose_6d)
+            encoded_poses.append(encoded_pose)
             
-            # Model forwarding and computing the needed variables for the losses
-            reconstructed_pose, _, _ = model(full_body_target_pose_6d)
+    return encoded_poses
+
+def decode_sequence(device, encoded_poses, chunk_frames, stride, num_chunks, full_body_joint_count, batch_size, pre_frames, final_reconstructed_6d, weight_mask, fade_in, fade_out):
+    with torch.no_grad():
+        model = _stage1_model_cache["full_body_model"]
+        for i in range(num_chunks):
+            start_frame = i * stride
+            end_frame = start_frame + chunk_frames
+            
+            encoded_pose = encoded_poses[i]
+            reconstructed_pose = model.decode(encoded_pose)
 
             reconstructed_full_body_pose_6d = reconstructed_pose.reshape(batch_size, chunk_frames, full_body_joint_count, 6)
             reconstructed_full_body_pose_matrix = rc.rotation_6d_to_matrix(reconstructed_full_body_pose_6d)
             reconstructed_full_body_pose_6d = rc.matrix_to_rotation_6d(reconstructed_full_body_pose_matrix)
 
-            # Store for next iteration history
-            latent_last = reconstructed_full_body_pose_6d.reshape(batch_size, chunk_frames, -1)
-
-            # Weight blending between chunks
             chunk_weight = torch.ones((batch_size, chunk_frames, full_body_joint_count, 6), device=device)
             if i > 0:
                 chunk_weight[:, :pre_frames, :, :] *= fade_in
@@ -107,18 +115,47 @@ def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
 
             final_reconstructed_6d[:, start_frame:end_frame] += reconstructed_full_body_pose_6d * chunk_weight
             weight_mask[:, start_frame:end_frame] += chunk_weight[:, :, :1, :1]
-    
-    final_reconstructed_6d = final_reconstructed_6d / (weight_mask + 1e-8)
-    reconstructed_6d = final_reconstructed_6d # [1, num_frames, 43, 6]
+        
+        final_reconstructed_6d = final_reconstructed_6d / (weight_mask + 1e-8)
+            
+    return final_reconstructed_6d
+
+def visualize_reconstruction(target_npz_file, device, batch_size, valid_frames, final_reconstructed_6d, original_loader, progress):
+    reconstructed_6d = final_reconstructed_6d
     reconstructed_matrix = rc.rotation_6d_to_matrix(reconstructed_6d)
-    final_reconstructed_pose = rc.matrix_to_axis_angle(reconstructed_matrix).reshape(batch_size * valid_frames, -1) # [frames, channels]
- 
+    final_reconstructed_pose = rc.matrix_to_axis_angle(reconstructed_matrix).reshape(batch_size * valid_frames, -1)
+
     reconstructed_loader = utils.SeamlessSMPLHLoader(target_npz_file, device=device)
     reconstructed_loader.overwrite_with_reconstructed_pose(final_reconstructed_pose)
     
     output_video_path = utils.generate_reconstruction_comparison_video(original_loader, reconstructed_loader, progress=progress, use_cache=False)
     
     return output_video_path, "Status: Side-by-Side Reconstruction Complete."
+
+def reconstruct_and_render(target_npz_file, device, progress=gr.Progress()):
+    setup_data = setup_reconstruction(target_npz_file, device)
+    if isinstance(setup_data, tuple) and len(setup_data) == 2: # for if the model is not loaded
+        return setup_data
+        
+    (original_loader, full_pose_sequence, chunk_frames, stride, num_chunks, 
+     full_body_joint_count, batch_size, valid_frames, pre_frames, 
+     final_reconstructed_6d, weight_mask, fade_in, fade_out) = setup_data # unpack setup_data
+
+    encoded_poses = encode_sequence(
+        full_pose_sequence, chunk_frames, stride, num_chunks, 
+        full_body_joint_count, batch_size
+    )
+
+    final_reconstructed_6d = decode_sequence(
+        device, encoded_poses, chunk_frames, stride, num_chunks, 
+        full_body_joint_count, batch_size, pre_frames, 
+        final_reconstructed_6d, weight_mask, fade_in, fade_out
+    )
+
+    return visualize_reconstruction(
+        target_npz_file, device, batch_size, valid_frames, 
+        final_reconstructed_6d, original_loader, progress
+    )
 
 def render_full_body_reconstruction_tab(device):
     with gr.TabItem("Stage 1: Reconstruction"):
@@ -149,66 +186,3 @@ def render_full_body_reconstruction_tab(device):
             inputs=[target_npz_file, gr.State(device)],
             outputs=[output_video_component, status_markdown]
         )
-
-
-def reconstruct_and_render_lmdb(lmdb_list, target_npz_file, device, progress=gr.Progress()):
-    if _stage1_model_cache["full_body_model"] is None:
-        return None, "Status: Please load the model first."
-
-    original_loader = utils.SeamlessSMPLHLoader(target_npz_file, device=device)
-    
-    chunk_frames = 64
-    stride = 20
-
-    num_chunks = len(lmdb_list)
-    full_body_joint_count = 43
-    batch_size = 1 # We do not batch here, so its just hard set to 1
-    #
-    valid_frames = (num_chunks - 1) * stride + chunk_frames
-    latent_last = None
-    pre_frames = chunk_frames - stride
-    final_reconstructed_6d = torch.zeros((batch_size, valid_frames, full_body_joint_count, 6), device=device)
-    
-    with torch.no_grad():
-        for i in range(num_chunks):
-            start_frame = i * stride
-            end_frame = start_frame + chunk_frames
-            chunk_tensor = lmdb_list[i]
-            
-            # Full body
-            full_body_target_pose = chunk_tensor
-            full_body_target_pose_matrix = rc.axis_angle_to_matrix(full_body_target_pose.reshape(batch_size, chunk_frames, full_body_joint_count, 3))
-            full_body_target_pose_6d = rc.matrix_to_rotation_6d(full_body_target_pose_matrix).reshape(batch_size, chunk_frames, full_body_joint_count * 6)
-            
-            if i > 0 and latent_last is not None:
-                # Seed the start of the current input with the end of the previous output
-                full_body_target_pose_6d[:, :pre_frames, :] = latent_last[:, -pre_frames:, :]
-
-            # Normally model output is here
-            reconstructed_pose = full_body_target_pose_6d
-            #
-            # reconstructed_full_body_pose_6d = reconstructed_pose.transpose(1, 2).reshape(batch_size, chunk_frames, full_body_joint_count, 6)
-            reconstructed_full_body_pose_6d = reconstructed_pose.reshape(batch_size, chunk_frames, full_body_joint_count, 6) # Debugging
-            reconstructed_full_body_pose_matrix = rc.rotation_6d_to_matrix(reconstructed_full_body_pose_6d)
-            reconstructed_full_body_pose_6d = rc.matrix_to_rotation_6d(reconstructed_full_body_pose_matrix)
-            # Store for next iteration's history
-            latent_last = reconstructed_full_body_pose_6d.reshape(batch_size, chunk_frames, -1)
-
-            # Placement into the final buffer
-            if i == 0:
-                final_reconstructed_6d[:, start_frame:end_frame] = reconstructed_full_body_pose_6d
-            else:
-                # Only write the new frames
-                new_start = start_frame + pre_frames
-                final_reconstructed_6d[:, new_start:end_frame] = reconstructed_full_body_pose_6d[:, pre_frames:]
-    
-    reconstructed_6d = final_reconstructed_6d # [1, num_frames, 43, 6]
-    reconstructed_matrix = rc.rotation_6d_to_matrix(reconstructed_6d)
-    final_reconstructed_pose = rc.matrix_to_axis_angle(reconstructed_matrix).reshape(batch_size * valid_frames, -1) # [frames, channels]
-
-    reconstructed_loader = utils.SeamlessSMPLHLoader(target_npz_file, device=device)
-    reconstructed_loader.overwrite_with_reconstructed_pose(final_reconstructed_pose)
-    
-    output_video_path = utils.generate_reconstruction_comparison_video(original_loader, reconstructed_loader, progress=progress)
-    
-    return output_video_path, "Status: Side-by-Side Reconstruction Complete."

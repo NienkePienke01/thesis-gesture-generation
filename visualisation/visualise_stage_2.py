@@ -12,7 +12,7 @@ from stage_2_models.autoregressive_transformer import AutoRegressiveMotionTransf
 from training.stage2_trainer_seamless import load_stage_1_checkpoint
 from utils import rotation_conversions as rc
 import data_processing.utils as utils
-from data_processing.seamless_segmenter import SeamlessSegmenter
+from data_processing.seamless_segmenter import SeamlessSegmenter, get_relationship_id
 from data_processing.seamless_segmenter import relationship_detail_map
 from visualisation.file_browser import create_file_browser
 
@@ -121,7 +121,7 @@ def generate_stage2_tokens(target_npz_path, device_str, top_k, top_p, temperatur
         raise ValueError("Please initialize the models first using step 1.")
 
     device = torch.device(device_str)
-    progress(0.1, desc="Extracting features using SeamlessSegmenter...")
+    progress(0.1, desc="Extracting features using Seamless Segmenter...")
     
     # Initialize asset dataset and loaders
     original_loader = utils.SeamlessSMPLHLoader(target_npz_path, device=device, with_meta_data=True, load_vertices=True)
@@ -135,36 +135,14 @@ def generate_stage2_tokens(target_npz_path, device_str, top_k, top_p, temperatur
             partner_loader = utils.SeamlessSMPLHLoader(partner_path, device=device, with_meta_data=True, load_vertices=False)
 
     segment_data = segmenter._get_loader_segmentation_data(original_loader, partner_loader)
-
-    # Reformat arrays
-    agent_audio_features = torch.from_numpy(segment_data.aligned_audio).unsqueeze(0).to(device).float()
-    bert_text_features = torch.from_numpy(np.array([word_info["embedding"] for word_info in segment_data.aligned_words])).unsqueeze(0).to(device).float()
-    conversation_states = torch.from_numpy(segment_data.aligned_conversation_states).unsqueeze(0).to(device)
-    personality_traits = torch.from_numpy(segment_data.personality_vector).unsqueeze(0).to(device).float()
     
     if partner_loader is not None:
         partner_segment_data = segmenter._get_loader_segmentation_data(partner_loader, original_loader)
         partner_audio_features = torch.from_numpy(partner_segment_data.aligned_audio).unsqueeze(0).to(device).float()
     else:
         print("\nWARNING: PARTNER WAS NOT FOUND! USING ZERO DATA FOR PARTNER AUDIO\n")
-        partner_audio_features = torch.zeros_like(agent_audio_features)
-        
-    relationship_string = str(original_loader.meta_data.relationship_detail).lower().strip() if original_loader.meta_data.relationship_detail else "stranger"
-    social_relationship = torch.tensor([relationship_detail_map.get(relationship_string, 0)], dtype=torch.long, device=device)
     
-    emotion_scores = original_loader.meta_data.emotion_scores
-    if emotion_scores is not None:
-        emotion_categories = torch.from_numpy(np.argmax(emotion_scores, axis=1)).long().unsqueeze(0).to(device)
-    else:
-        emotion_categories = torch.full((1, original_loader.num_frames), 5, dtype=torch.long, device=device)
-
-    # Downsample to fit token space
-    downsample_factor = _stage2_runtime_cache["downsample_factor"]
-    agent_audio_downsampled = agent_audio_features[:, ::downsample_factor]
-    partner_audio_downsampled = partner_audio_features[:, ::downsample_factor]
-    bert_text_downsampled = bert_text_features[:, ::downsample_factor]
-    conversation_states_downsampled = conversation_states[:, ::downsample_factor]
-    emotion_categories_downsampled = emotion_categories[:, ::downsample_factor]
+    relationship = get_relationship_id(original_loader)
     
     total_token_frames = agent_audio_downsampled.shape[1]
     max_sequence_length = _stage2_runtime_cache["max_seq_len"]
