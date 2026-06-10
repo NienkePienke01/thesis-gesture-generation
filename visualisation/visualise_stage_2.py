@@ -259,7 +259,8 @@ def reconstruct_and_render(target_npz_file, device, top_k, top_p, temperature, p
     chunk_codes = (chunk_frames // downsample_factor)
     # Sliding window chunking to keep stride overlap
     token_chunks = pose_codes.unfold(dimension=1, size=chunk_codes, step=stride // downsample_factor)
-    pose_codes_list = list(token_chunks.permute(1, 0, 2, 3)) # Permute from [batch, num_chunks, chunk_frames, downsample_factor] to a list of [batch, chunk_frames, downsample_factor] tensors
+    token_chunks = token_chunks.permute(1, 0, 3, 2)
+    pose_codes_list = list(token_chunks.unbind(dim=0)) # Permute from [batch, num_chunks, chunk_frames, downsample_factor] to a list of [batch, chunk_frames, downsample_factor] tensors
     print("="*50)
     print(f"Num chunks is of size {num_chunks} and the list is of size {len(pose_codes_list)} and pose_codes has a shape of {pose_codes.shape} and an entry in the list has shape {pose_codes_list[0].shape}")
     print("="*50)
