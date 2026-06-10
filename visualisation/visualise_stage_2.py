@@ -252,7 +252,7 @@ def reconstruct_and_render(target_npz_file, device, top_k, top_p, temperature, p
     # Update the variables since we use a different stride now
     num_frames = segment_data.aligned_pose.shape[0]
     chunk_frames, stride, num_chunks, full_body_joint_count, batch_size, valid_frames, pre_frames, weight_mask, fade_in, fade_out = get_loop_variables(device, 64, num_frames, 
-                                                                                                                       20,
+                                                                                                                       64,
                                                                                                                        1, 43)
     # Turn the large tensor of motion codes into a list of tensors of size "16" to match stage 1 reconstruction
     downsample_factor =  _stage2_runtime_cache["stage1_model"].downsample_factor
