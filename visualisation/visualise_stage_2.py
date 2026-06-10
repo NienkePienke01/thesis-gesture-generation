@@ -257,7 +257,7 @@ def reconstruct_and_render(target_npz_file, device, top_k, top_p, temperature, p
     final_6d_pose = stage_1_reconstruction.decode_sequence(
         device, pose_codes, chunk_frames, stride, num_chunks, 
         full_body_joint_count, batch_size, pre_frames, 
-        final_reconstructed_6d, weight_mask, fade_in, fade_out
+        final_reconstructed_6d, weight_mask, fade_in, fade_out, model=_stage2_runtime_cache["stage1_model"]
     )
 
     return stage_1_reconstruction.visualize_reconstruction(

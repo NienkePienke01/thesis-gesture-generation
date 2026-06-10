@@ -93,9 +93,10 @@ def encode_sequence(full_pose_sequence, chunk_frames, stride, num_chunks, full_b
             
     return encoded_poses
 
-def decode_sequence(device, encoded_poses, chunk_frames, stride, num_chunks, full_body_joint_count, batch_size, pre_frames, final_reconstructed_6d, weight_mask, fade_in, fade_out):
+def decode_sequence(device, encoded_poses, chunk_frames, stride, num_chunks, full_body_joint_count, batch_size, pre_frames, final_reconstructed_6d, weight_mask, fade_in, fade_out, model=None):
     with torch.no_grad():
-        model = _stage1_model_cache["full_body_model"]
+        if model is None:
+            model = _stage1_model_cache["full_body_model"]
         for i in range(num_chunks):
             start_frame = i * stride
             end_frame = start_frame + chunk_frames
