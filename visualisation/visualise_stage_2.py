@@ -253,9 +253,11 @@ def reconstruct_and_render(target_npz_file, device, top_k, top_p, temperature, p
     chunk_frames, stride, num_chunks, full_body_joint_count, batch_size, valid_frames, pre_frames = get_loop_variables(64, num_frames, 
                                                                                                                        20,
                                                                                                                        1, 43)
-
+    downsample_factor =  _stage2_runtime_cache["stage1_model"].downsample_factor
+    chunk_codes = (chunk_frames // downsample_factor)
+    pose_codes_list = list(pose_codes.view(1, -1, chunk_codes, downsample_factor).unbind(dim=1))
     final_6d_pose = stage_1_reconstruction.decode_sequence(
-        device, pose_codes, chunk_frames, stride, num_chunks, 
+        device, pose_codes_list, chunk_frames, stride, num_chunks, 
         full_body_joint_count, batch_size, pre_frames, 
         final_reconstructed_6d, weight_mask, fade_in, fade_out, model=_stage2_runtime_cache["stage1_model"]
     )
