@@ -254,9 +254,13 @@ def reconstruct_and_render(target_npz_file, device, top_k, top_p, temperature, p
     chunk_frames, stride, num_chunks, full_body_joint_count, batch_size, valid_frames, pre_frames, weight_mask, fade_in, fade_out = get_loop_variables(device, 64, num_frames, 
                                                                                                                        20,
                                                                                                                        1, 43)
+    # Turn the large tensor of motion codes into a list of tensors of size "16" to match stage 1 reconstruction
     downsample_factor =  _stage2_runtime_cache["stage1_model"].downsample_factor
     chunk_codes = (chunk_frames // downsample_factor)
     pose_codes_list = list(pose_codes.view(1, -1, chunk_codes, downsample_factor).unbind(dim=1))
+    print("="*50)
+    print(f"Num chunks is of size {num_chunks} and the list is of size {pose_codes_list} and pose_codes has a shape of {pose_codes.shape}")
+    print("="*50)
     final_6d_pose = stage_1_reconstruction.decode_sequence(
         device, pose_codes_list, chunk_frames, stride, num_chunks, 
         full_body_joint_count, batch_size, pre_frames, 
