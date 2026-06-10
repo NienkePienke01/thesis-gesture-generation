@@ -163,8 +163,8 @@ def generate_motion_sequence(device, segment_data, partner_segment_data, chunk_f
     generated_tokens = torch.full((batch_size, final_amount_of_tokens, downsample_factor), code_dim, dtype=torch.long, device=device) # [1, 16, 4] for example
     chunk_codes = (chunk_frames // downsample_factor)
     # Prepare the features
-    segment_data.aligned_wav2vec_audio = torch.from_numpy(segment_data.aligned_wav2vec_audio).float()
-    segment_data.personality_vector = torch.from_numpy(segment_data.personality_vector).float()
+    segment_data.aligned_wav2vec_audio = torch.from_numpy(segment_data.aligned_wav2vec_audio).float().to(device)
+    segment_data.personality_vector = torch.from_numpy(segment_data.personality_vector).float().to(device)
     personality_input = segment_data.personality_vector.unsqueeze(0)
     #
     with torch.no_grad():
