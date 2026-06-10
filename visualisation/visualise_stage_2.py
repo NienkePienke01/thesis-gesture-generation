@@ -53,7 +53,7 @@ def load_stage2_and_stage1_pipeline(stage2_config_path, stage2_checkpoint_path, 
         )
         
         # Load stage 2
-        stage2_model = AutoRegressiveMotionTransformer(args, vocab_size=args.model_params.code_dim + 1).to(device).to(device)
+        stage2_model = AutoRegressiveMotionTransformer(args, vocab_size=m_s1["code_dim"] + 1).to(device)
         
         stage2_model.load_state_dict(torch.load(stage2_checkpoint_path, map_location=device))
         stage2_model.eval()
@@ -267,7 +267,7 @@ def render_stage2_generation_tab(device):
         gr.Markdown("### 1. Load System Framework (Stage 2 + Stage 1 Dependency)")
         with gr.Row():
             stage2_config = create_file_browser("Stage 2 Config Path (.json)", extensions=[".json"], file_count="single", default_value="/data/scratch/davwer_projects/mpi-thesis/configs/stage2_model.json")
-            stage2_checkpoint = create_file_browser("Stage 2 Checkpoint Path (.bin)", extensions=[".bin"], file_count="single", default_value="/data/scratch/davwer_projects/mpi-thesis/checkpoints_stage_2/stage_2_model/20260601_1840/stage2_final_epoch_199.bin")
+            stage2_checkpoint = create_file_browser("Stage 2 Checkpoint Path (.bin)", extensions=[".bin"], file_count="single", default_value="/data/scratch/davwer_projects/mpi-thesis/checkpoints_stage_2/stage_2_model_ce_mse_soft/20260609_2034/stage2_final_epoch_199.bin")
             segmenter_config = create_file_browser("Segmenter Config Path (.json)", extensions=[".json"], file_count="single", default_value="/data/scratch/davwer_projects/mpi-thesis/configs/seamless_segmenter_stage_2.json")
             
         load_pipeline_btn = gr.Button("Initialize Integrated Model Pipeline", variant="secondary")
@@ -282,7 +282,7 @@ def render_stage2_generation_tab(device):
             
         gr.Markdown("### 3. Select Target Conversation Interaction File")
         with gr.Row():
-            target_npz_file = create_file_browser("Target .NPZ Sequence File Path", extensions=[".npz"], file_count="single", default_value="data/seamless/downloads/stage_2_data_imitator/naturalistic/train/0002/0001/V00_S0124_I00000384_P0183.npz")
+            target_npz_file = create_file_browser("Target .NPZ Sequence File Path", extensions=[".npz"], file_count="single", default_value="data/seamless/downloads/train_first_1000_imitator_samples/naturalistic/train/0001/0022/V00_S0096_I00000126_P0138.npz")
             generate_gesture_btn = gr.Button("Generate Gestures from Audio Context", variant="primary")
             
         output_video_component = gr.Video(label="Front View Evaluation: Ground Truth (Left) | Generated from Audio (Right)")
