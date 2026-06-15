@@ -254,6 +254,7 @@ def reconstruct_and_render(target_npz_file, device, top_k, top_p, temperature, p
 
     print("="*50)
     print(f"Num chunks is of size {num_chunks} and the list is of size {len(pose_codes_list)} and pose_codes has a shape of {pose_codes.shape} and an entry in the list has shape {pose_codes_list[0].shape}")
+    print(f"{pose_codes_list}")
     print("="*50)
     final_6d_pose = stage_1_reconstruction.decode_sequence(
         device, pose_codes_list, chunk_frames, stride, num_chunks, 
