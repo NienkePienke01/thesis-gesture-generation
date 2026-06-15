@@ -87,18 +87,6 @@ def load_stage2_and_stage1_pipeline(stage2_config_path, stage2_checkpoint_path, 
     except Exception as e:
         return f"Status: Framework loading failure - {str(e)}"
 
-def get_loop_variables(device, chunk_frames, num_frames, stride, batch_size, full_body_joint_count):
-    num_chunks = math.floor((num_frames - chunk_frames) / stride) + 1
-    
-    valid_frames = (num_chunks - 1) * stride + chunk_frames
-    pre_frames = chunk_frames - stride
-
-    weight_mask = torch.zeros((batch_size, valid_frames, 1, 1), device=device)
-    fade_in = torch.linspace(0.0, 1.0, steps=pre_frames, device=device).view(1, -1, 1, 1)
-    fade_out = torch.linspace(1.0, 0.0, steps=pre_frames, device=device).view(1, -1, 1, 1)
-
-    return chunk_frames, stride, num_chunks, full_body_joint_count, batch_size, valid_frames, pre_frames, weight_mask, fade_in, fade_out
-
 def setup_reconstruction(target_npz_path, device):
     if _stage2_runtime_cache["stage1_model"] is None or _stage2_runtime_cache["stage2_model"] is None or _stage2_runtime_cache["segmenter"] is None:
         return None, "Status: Please load the model(s) and segmenter first."
@@ -124,17 +112,8 @@ def setup_reconstruction(target_npz_path, device):
     else:
         print("\nWARNING: PARTNER WAS NOT FOUND! USING ZERO DATA FOR PARTNER AUDIO\n")
     relationship = get_relationship_id(original_loader)
-    
-    num_frames = segment_data.aligned_pose.shape[0]
-    chunk_frames, stride, num_chunks, full_body_joint_count, batch_size, valid_frames, pre_frames, weight_mask, fade_in, fade_out = get_loop_variables(device, 64, num_frames, 
-                                                                                                                       _stage2_runtime_cache["stage1_model"].downsample_factor,
-                                                                                                                       1, 43)
 
-    final_reconstructed_6d = torch.zeros((batch_size, valid_frames, full_body_joint_count, 6), device=device)
-    
-    return (original_loader, segment_data, chunk_frames, stride, num_chunks, 
-            full_body_joint_count, batch_size, valid_frames, pre_frames, 
-            final_reconstructed_6d, weight_mask, fade_in, fade_out, partner_segment_data)
+    return original_loader, segment_data, partner_segment_data, relationship
 
 def sample_top_p_k(logits, top_k=50, top_p=0.9, temperature=1.0):
     logits = logits / max(temperature, 1e-5)
@@ -237,11 +216,15 @@ def reconstruct_and_render(target_npz_file, device, top_k, top_p, temperature, p
     setup_data = setup_reconstruction(target_npz_file, device)
     if isinstance(setup_data, tuple) and len(setup_data) == 2: # for if the model is not loaded
         return setup_data
-        
-    (original_loader, segment_data, chunk_frames, stride, num_chunks, 
-        full_body_joint_count, batch_size, valid_frames, pre_frames, 
-        final_reconstructed_6d, weight_mask, fade_in, fade_out, partner_segment_data) = setup_data # unpack setup_data
 
+    original_loader, segment_data, partner_segment_data, relationship = setup_data
+    stride = _stage2_runtime_cache["stage1_model"].downsample_factor
+    chunk_frames =  _stage2_runtime_cache["segmenter"].pose_length
+    num_frames = segment_data.aligned_pose.shape[0]
+    num_chunks = math.floor((num_frames - chunk_frames) / stride) + 1
+    batch_size = 1
+
+    # Do inference on stage 2
     pose_codes = generate_motion_sequence(
         device, 
         segment_data, partner_segment_data, 
@@ -249,18 +232,26 @@ def reconstruct_and_render(target_npz_file, device, top_k, top_p, temperature, p
         temperature=temperature, top_p=top_p, top_k=top_k
     )
 
-    # Update the variables since we use a different stride now
-    num_frames = segment_data.aligned_pose.shape[0]
-    chunk_frames, stride, num_chunks, full_body_joint_count, batch_size, valid_frames, pre_frames, weight_mask, fade_in, fade_out = get_loop_variables(device, 64, num_frames, 
-                                                                                                                       20,
-                                                                                                                       1, 43)
     # Turn the large tensor of motion codes into a list of tensors of size "16" to match stage 1 reconstruction
     downsample_factor =  _stage2_runtime_cache["stage1_model"].downsample_factor
     chunk_codes = (chunk_frames // downsample_factor)
+    stride = _stage2_runtime_cache["segmenter"].stride # stride value for reconstruction
+
     # Sliding window chunking to keep stride overlap
     token_chunks = pose_codes.unfold(dimension=1, size=chunk_codes, step=stride // downsample_factor)
     token_chunks = token_chunks.permute(1, 0, 3, 2)
     pose_codes_list = list(token_chunks.unbind(dim=0)) # Permute from [batch, num_chunks, chunk_frames, downsample_factor] to a list of [batch, chunk_frames, downsample_factor] tensors
+
+    # Update the main variables to match the proper iterations of the reconstruction loop
+    num_chunks = len(pose_codes_list)
+    valid_frames = (num_chunks - 1) * stride + chunk_frames
+    full_body_joint_count = 43
+    final_reconstructed_6d = torch.zeros((batch_size, valid_frames, full_body_joint_count, 6), device=device)
+    pre_frames = chunk_frames - stride
+    weight_mask = torch.zeros((batch_size, valid_frames, 1, 1), device=device)
+    fade_in = torch.linspace(0.0, 1.0, steps=pre_frames, device=device).view(1, -1, 1, 1)
+    fade_out = torch.linspace(1.0, 0.0, steps=pre_frames, device=device).view(1, -1, 1, 1)
+
     print("="*50)
     print(f"Num chunks is of size {num_chunks} and the list is of size {len(pose_codes_list)} and pose_codes has a shape of {pose_codes.shape} and an entry in the list has shape {pose_codes_list[0].shape}")
     print("="*50)
