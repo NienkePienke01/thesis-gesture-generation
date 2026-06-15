@@ -199,6 +199,7 @@ def generate_motion_sequence(device, segment_data, partner_segment_data, chunk_f
             # Sample each codebook layer hierarchically for this frame
             for layer_idx in range(4):
                 layer_logits = next_frame_logits[:, :, layer_idx] # Shape: [B, vocab_size]
+                layer_logits[..., 512] = float('-inf') # block the mask token from being chosen 
                 
                 # sampled_token = torch.argmax(layer_logits, dim=-1, keepdim=True)
                 sampled_token = sample_top_p_k(layer_logits, top_p=top_p, temperature=temperature) # Shape: [B, 1]
