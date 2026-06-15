@@ -200,8 +200,8 @@ def generate_motion_sequence(device, segment_data, partner_segment_data, chunk_f
             for layer_idx in range(4):
                 layer_logits = next_frame_logits[:, :, layer_idx] # Shape: [B, vocab_size]
                 
-                sampled_token = torch.argmax(layer_logits, dim=-1, keepdim=True)
-                # sampled_token = sample_top_p_k(layer_logits, top_p=top_p, temperature=temperature) # Shape: [B, 1]
+                # sampled_token = torch.argmax(layer_logits, dim=-1, keepdim=True)
+                sampled_token = sample_top_p_k(layer_logits, top_p=top_p, temperature=temperature) # Shape: [B, 1]
                 next_frame_tokens.append(sampled_token)
                 
             next_frame_tensor = torch.stack(next_frame_tokens, dim=-1).squeeze(1) # Shape: [B, 4]
