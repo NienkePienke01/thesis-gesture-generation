@@ -1,5 +1,5 @@
 {
-    "project": "stage_2_model_adjusted",
+    "project": "stage_2_model_high_mse_weight",
     "device": "cuda",
     "gpus": [0, 1, 2, 3],
     "workers_per_gpu": 4,
@@ -46,6 +46,6 @@
 
     "loss_weights": {
         "ce_weight": 1.0,
-        "mse_weight": 1.0
+        "mse_weight": 100.0
     }
 }
