@@ -95,6 +95,8 @@ class PredictResidualZQ(nn.Module):
     def __init__(self, latent_dim=256, num_head=8, ffn_dim=1024, dropout=0.1, n_tokens=3, vocab_size=513):
         super(PredictResidualZQ, self).__init__()
         self.n_tokens = n_tokens
+
+        self.initial_map = nn.Linear(latent_dim * 2, latent_dim)
         
         # Cross-attention layers (3 layers each just like semtalk.py)
         cross_layer = nn.TransformerDecoderLayer(
@@ -106,7 +108,7 @@ class PredictResidualZQ(nn.Module):
         
         # Projection maps for concatenated residuals (skipping the first token)
         self.maps = nn.ModuleList([
-            nn.Linear(latent_dim * (i + 1), latent_dim) for i in range(1, n_tokens)
+            nn.Linear(latent_dim * (i + 2), latent_dim) for i in range(1, n_tokens)
         ])
         
         # Classifiers for each level
@@ -114,14 +116,16 @@ class PredictResidualZQ(nn.Module):
             MLP(latent_dim, latent_dim, vocab_size) for _ in range(n_tokens)
         ])
 
-    def forward(self, pre_index, cond):
+    def forward(self, pre_index, cond, layer_0_embedding):
         pre_index = pre_index.permute(1, 0, 2)
         cond = cond.permute(1, 0, 2)
-        
+        layer_0_embedding = layer_0_embedding.permute(1, 0, 2)
+
         zqs = []
         zq_indices = []
         
-        current_input = pre_index
+        concatenated_input = torch.cat([pre_index, layer_0_embedding], dim=-1)
+        current_input = self.initial_map(concatenated_input)
         
         for i in range(self.n_tokens):
             # Apply Cross-Attention
@@ -136,7 +140,7 @@ class PredictResidualZQ(nn.Module):
             if i < self.n_tokens - 1:
                 # Concatenate [pre_index, zq_1, ..., zq_i]
                 # Each iteration i needs previous zq_1 ... zq_i
-                cat_input = torch.cat([pre_index] + zqs, dim=-1)
+                cat_input = torch.cat([pre_index, layer_0_embedding] + zqs, dim=-1)
                 current_input = self.maps[i](cat_input)
         
         # permute back to [B, T, C]

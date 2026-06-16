@@ -136,7 +136,7 @@ def sample_top_p_k(logits, top_k=50, top_p=0.9, temperature=1.0):
     probs = F.softmax(logits, dim=-1)
     return torch.multinomial(probs, num_samples=1)
 
-def generate_motion_sequence(device, segment_data, partner_segment_data, chunk_frames, stride, num_chunks, batch_size, temperature=1.0, top_p=0.90, top_k=50):
+def generate_motion_sequence(device, segment_data, partner_segment_data, chunk_frames, stride, num_chunks, batch_size, temperature=1.0, top_p=0.90, top_k=50, warm_start=False):
     downsample_factor =  _stage2_runtime_cache["stage1_model"].downsample_factor
     code_dim = _stage2_runtime_cache["stage1_model"].categories
     final_amount_of_tokens = segment_data.aligned_pose.shape[0] // downsample_factor
@@ -155,7 +155,7 @@ def generate_motion_sequence(device, segment_data, partner_segment_data, chunk_f
             audio_input = segment_data.aligned_wav2vec_audio[0:chunk_frames].unsqueeze(0)
             # Slice the 15-token input context window (unpredicted tokens remain masked as code_dim)
             tokens_input = generated_tokens[:, 0:chunk_codes - 1, :]
-            logits, _ = model(
+            logits, _, features, cross_attention_condition = model(
                 motion_tokens=tokens_input,
                 audio=audio_input,
                 partner_audio=None, bert=None, emotions=None, social=None, conversation_state=None,
@@ -181,10 +181,12 @@ def generate_motion_sequence(device, segment_data, partner_segment_data, chunk_f
             end_frame = start_frame + chunk_frames
 
             # Slice exactly 15 tokens for the input window to match training shapes
-            tokens_input = generated_tokens[:, start_frame//downsample_factor : (end_frame//downsample_factor) - 1, :]
+            start_token = start_frame // downsample_factor
+            end_token = start_token + chunk_codes - 1
+            tokens_input = generated_tokens[:, start_token:end_token, :]
             audio_input = segment_data.aligned_wav2vec_audio[start_frame:end_frame].unsqueeze(0) # Unsqueeze to add batch dimension
 
-            logits, _ = model(
+            logits, _, features, cross_attention_condition = model(
                 motion_tokens=tokens_input,
                 audio=audio_input,
                 partner_audio=None,
@@ -193,16 +195,29 @@ def generate_motion_sequence(device, segment_data, partner_segment_data, chunk_f
                 cond_drop_prob=0.0
             )
 
+            # Predict layer 0
             next_frame_logits = logits[:, -1, :, :] # Grab the just generated motion code (last one in the sequence)
-            
+            layer_logits = next_frame_logits[:, :, 0] # Shape: [B, vocab_size], only grab layer 0 for the main head
+            layer_logits[..., 512] = float('-inf') # block the mask token from being chosen 
+            sampled_token = sample_top_p_k(layer_logits, top_p=top_p, temperature=temperature, top_k=top_k) # Shape: [B, 1]
+            next_frame_tokens.append(sampled_token)
+
+            # Predict the residual layers 1-2-3
+            next_frame_features = features[:, -1:, :]
+            next_frame_audio_cond = cross_attention_condition[:, -1:, :]
+            _, _, _, r1_logits, r2_logits, r3_logits = model.residual_predictor(
+                next_frame_features, 
+                next_frame_audio_cond
+            )
+                        
             next_frame_tokens = []
             # Sample each codebook layer hierarchically for this frame
-            for layer_idx in range(4):
+            for layer_idx in range(3):
                 layer_logits = next_frame_logits[:, :, layer_idx] # Shape: [B, vocab_size]
                 layer_logits[..., 512] = float('-inf') # block the mask token from being chosen 
                 
                 # sampled_token = torch.argmax(layer_logits, dim=-1, keepdim=True)
-                sampled_token = sample_top_p_k(layer_logits, top_p=top_p, temperature=temperature) # Shape: [B, 1]
+                sampled_token = sample_top_p_k(layer_logits, top_p=top_p, temperature=temperature, top_k=top_k) # Shape: [B, 1]
                 next_frame_tokens.append(sampled_token)
                 
             next_frame_tensor = torch.stack(next_frame_tokens, dim=-1).squeeze(1) # Shape: [B, 4]
@@ -213,7 +228,7 @@ def generate_motion_sequence(device, segment_data, partner_segment_data, chunk_f
                 generated_tokens[:, target_idx, :] = next_frame_tensor
     return generated_tokens
 
-def reconstruct_and_render(target_npz_file, device, top_k, top_p, temperature, progress=gr.Progress()):
+def reconstruct_and_render(target_npz_file, device, top_k, top_p, temperature, warm_start, progress=gr.Progress()):
     setup_data = setup_reconstruction(target_npz_file, device)
     if isinstance(setup_data, tuple) and len(setup_data) == 2: # for if the model is not loaded
         return setup_data
@@ -230,7 +245,7 @@ def reconstruct_and_render(target_npz_file, device, top_k, top_p, temperature, p
         device, 
         segment_data, partner_segment_data, 
         chunk_frames, stride, num_chunks, batch_size, 
-        temperature=temperature, top_p=top_p, top_k=top_k
+        temperature=temperature, top_p=top_p, top_k=top_k, warm_start=warm_start
     )
 
     # Turn the large tensor of motion codes into a list of tensors of size "16" to match stage 1 reconstruction
@@ -285,6 +300,7 @@ def render_stage2_generation_tab(device):
             temperature = gr.Slider(minimum=0.1, maximum=2.0, value=1.0, step=0.05, label="Temperature")
             top_k = gr.Slider(minimum=0, maximum=100, value=50, step=1, label="Top-K")
             top_p = gr.Slider(minimum=0.1, maximum=1.0, value=0.90, step=0.01, label="Top-P (Nucleus)")
+            warm_start = gr.Checkbox(value=True, label="Warm-Start (Seed with ground-truth context)")
             
         gr.Markdown("### 3. Select Target Conversation Interaction File")
         with gr.Row():
@@ -301,6 +317,6 @@ def render_stage2_generation_tab(device):
         
         generate_gesture_btn.click(
             fn=reconstruct_and_render,
-            inputs=[target_npz_file, gr.State(device), top_k, top_p, temperature],
+            inputs=[target_npz_file, gr.State(device), top_k, top_p, temperature, warm_start],
             outputs=[output_video_component, pipeline_status]
         )

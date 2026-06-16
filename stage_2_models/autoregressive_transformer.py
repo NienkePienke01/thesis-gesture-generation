@@ -106,7 +106,7 @@ class AutoRegressiveMotionTransformer(nn.Module):
         
         return masked_global, masked_tokens
 
-    def forward(self, motion_tokens, audio, partner_audio, bert, emotions, social, personality, conversation_state, cond_drop_prob: float = 0.0):
+    def forward(self, motion_tokens, audio, partner_audio, bert, emotions, social, personality, conversation_state, cond_drop_prob: float = 0.0, skip_residuals=False, active_layer0_tokens=None):
 
         B, T, D = motion_tokens.shape
         device = motion_tokens.device
@@ -137,7 +137,7 @@ class AutoRegressiveMotionTransformer(nn.Module):
         cross_attention_condition = self.norm_cond(cross_attention_condition)
 
         
-        # gating_weights = torch.softmax(self.audio_gate_weights(conversation_state), dim=-1)
+        # gating_weights = torch.max(self.audio_gate_weights(conversation_state), dim=-1)
         # memory = self.memory_fusion(torch.cat([(self.audio_proj(audio) * gating_weights[:, :, 0:1]) + 
         #                                        (self.audio_proj(partner_audio) * gating_weights[:, :, 1:2]),
         #                                          self.bert_proj(bert)
@@ -167,9 +167,18 @@ class AutoRegressiveMotionTransformer(nn.Module):
             )
         
         base_logits = self.base_classifier(features)
-        residual_outputs = list(self.residual_predictor(features, cross_attention_condition))
+
+        # If training, fall back to teacher-forcing the ground-truth Layer 0 tokens.
+        if active_layer0_tokens is None:
+            active_layer0_tokens = motion_tokens[:, :, 0]
+        layer0_emb = self.motion_embedding(active_layer0_tokens)
+
+        if skip_residuals:
+            return base_logits, None, features, cross_attention_condition
+
+        residual_outputs = list(self.residual_predictor(features, cross_attention_condition, layer0_emb))
         zqs = residual_outputs[:self.residual_predictor.n_tokens]
         residual_logits = residual_outputs[self.residual_predictor.n_tokens:]
         
         logits = torch.stack([base_logits] + residual_logits, dim=-1)
-        return logits, zqs
+        return logits, zqs, features, cross_attention_condition

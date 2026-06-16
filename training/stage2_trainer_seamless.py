@@ -94,14 +94,15 @@ class SeamlessStage2Trainer:
         soft_label_matrices = []
         
         for layer in self.stage1_model.quantizer.layers:
-            # Create the full codebook including the mask
-            mask_embedding = torch.zeros(1, layer.codebook.shape[1], device=layer.codebook.device)
-            codebook_full = torch.cat([layer.codebook, mask_embedding], dim=0) # [Code_dim, D]
-
-            dist_matrix = torch.cdist(codebook_full, codebook_full, p=2) # pairwise Euclidean distances [Code_dim, Code_dim]
-
+            dist_matrix = torch.cdist(layer.codebook, layer.codebook, p=2) # pairwise Euclidean distances [Code_dim, Code_dim]
             # -dist so closer items get higher probability
             soft_labels = F.softmax(-dist_matrix / temperature, dim=-1) # Convert to probabilities using Temperature Softmax
+
+            zero_column = torch.zeros(soft_labels.shape[0], 1, device=soft_labels.device) # extra, for the mask token
+            soft_labels = torch.cat([soft_labels, zero_column], dim=-1)
+
+            dummy_row = torch.zeros(1, soft_labels.shape[1], device=soft_labels.device) # dummy row of zeros at the bottom to prevent out-of-bounds
+            soft_labels = torch.cat([soft_labels, dummy_row], dim=0)
             
             soft_label_matrices.append(soft_labels)
             
@@ -157,7 +158,7 @@ class SeamlessStage2Trainer:
         target_tokens = ground_truth_tokens[:, 1:] # torch.Size([32, 15, 4]) tokens 1-15 (the ones we want to learn)
         target_latent_vectors = self._extract_codebook_latent_vector(target_tokens)
         
-        logits, _ = self.model(
+        logits, _, _, _ = self.model(
             motion_tokens=input_tokens,
             audio=dict_data["wav2vec_audio"].to(self.device), # torch.Size([32, 64, 768])
             partner_audio=dict_data["partner_wav2vec_audio"].to(self.device),
@@ -166,7 +167,8 @@ class SeamlessStage2Trainer:
             social=dict_data["social_relationship"].to(self.device),
             personality=dict_data["personality_traits"].to(self.device),
             conversation_state=dict_data["conversation_states"].to(self.device),
-            cond_drop_prob=self.cfg_drop_prob
+            cond_drop_prob=self.cfg_drop_prob,
+            skip_residuals=False
         )
         predicted_latent_vectors = self._compute_predicted_codebook_latent_vector(logits)
         
@@ -205,7 +207,8 @@ class SeamlessStage2Trainer:
 
         mse_loss = self.mse_loss_function(target_latent_vectors, predicted_latent_vectors)
             
-        total_loss = ((ce_loss + masked_loss) * self.args.loss_weights.ce_weight) + (self.args.loss_weights.mse_weight * mse_loss)
+        # total_loss = ((ce_loss + masked_loss) * self.args.loss_weights.ce_weight) + (self.args.loss_weights.mse_weight * mse_loss)
+        total_loss = ((ce_loss) * self.args.loss_weights.ce_weight) + (self.args.loss_weights.mse_weight * mse_loss)
                      
         total_loss.backward()
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.training_params.grad_norm)
@@ -228,7 +231,7 @@ class SeamlessStage2Trainer:
         target_tokens = ground_truth_tokens[:, 1:] # torch.Size([32, 15, 4])
         target_latent_vectors = self._extract_codebook_latent_vector(target_tokens)
         
-        logits, _ = self.model(
+        logits, _, _, _ = self.model(
             motion_tokens=input_tokens,
             audio=dict_data["wav2vec_audio"].to(self.device), # torch.Size([32, 64, 768])
             partner_audio=dict_data["partner_wav2vec_audio"].to(self.device),
@@ -237,7 +240,8 @@ class SeamlessStage2Trainer:
             social=dict_data["social_relationship"].to(self.device),
             personality=dict_data["personality_traits"].to(self.device),
             conversation_state=dict_data["conversation_states"].to(self.device),
-            cond_drop_prob=0.0
+            cond_drop_prob=0.0,
+            skip_residuals=False
         )
         predicted_latent_vectors = self._compute_predicted_codebook_latent_vector(logits)
         
