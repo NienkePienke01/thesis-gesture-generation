@@ -151,29 +151,61 @@ def generate_motion_sequence(device, segment_data, partner_segment_data, chunk_f
         model = _stage2_runtime_cache["stage2_model"]
         generated_tokens[:, 0, :] = torch.randint(0, code_dim, (batch_size, 1, 4), device=device) # Set the first token to a random seed token
         # Generate the initial 15 frames for the first chunk
-        for j in range(1, chunk_codes):
-            audio_input = segment_data.aligned_wav2vec_audio[0:chunk_frames].unsqueeze(0)
-            # Slice the 15-token input context window (unpredicted tokens remain masked as code_dim)
-            tokens_input = generated_tokens[:, 0:chunk_codes - 1, :]
-            logits, _, features, cross_attention_condition = model(
-                motion_tokens=tokens_input,
-                audio=audio_input,
-                partner_audio=None, bert=None, emotions=None, social=None, conversation_state=None,
-                personality=personality_input,
-                cond_drop_prob=0.0
-            )
+        if warm_start:
+            # Grab the raw pose for the first 64 frames
+            gt_pose_chunk = segment_data.aligned_pose[0:chunk_frames].unsqueeze(0).to(device) # Shape: [1, 64, 129]
             
-            # Grab logits at index j-1 to predict the token at index j
-            next_frame_logits = logits[:, j - 1, :, :]
+            # Reshape and convert to 6D Rotations (43 joints * 6)
+            batch_size = gt_pose_chunk.shape[0]
+            full_body_joint_count = 43
             
-            next_frame_tokens = []
-            for layer_idx in range(4):
-                layer_logits = next_frame_logits[:, :, layer_idx]
-                sampled_token = torch.argmax(layer_logits, dim=-1, keepdim=True)
-                next_frame_tokens.append(sampled_token)
+            gt_pose_matrix = rc.axis_angle_to_matrix(gt_pose_chunk.reshape(batch_size, chunk_frames, full_body_joint_count, 3))
+            gt_pose_6d = rc.matrix_to_rotation_6d(gt_pose_matrix).reshape(batch_size, chunk_frames, full_body_joint_count * 6)
+            
+            # Encode using Stage 1
+            stage1_model = _stage2_runtime_cache["stage1_model"]
+            encoded_tokens = stage1_model.encode(gt_pose_6d) # Shape: [B, chunk_codes, 4]
+            
+            # Inject the ground truth tokens into the history
+            generated_tokens[:, 0:chunk_codes, :] = encoded_tokens
+        else:
+            for j in range(1, chunk_codes):
+                audio_input = segment_data.aligned_wav2vec_audio[0:chunk_frames].unsqueeze(0)
                 
-            next_frame_tensor = torch.stack(next_frame_tokens, dim=-1).squeeze(1)
-            generated_tokens[:, j, :] = next_frame_tensor
+                # Slice the 15-token input context window (unpredicted tokens remain masked as code_dim)
+                tokens_input = generated_tokens[:, 0:chunk_codes - 1, :]
+                
+                # layer 0 pass
+                base_logits, _, features, cross_attention_condition = model(
+                    motion_tokens=tokens_input,
+                    audio=audio_input,
+                    partner_audio=None, bert=None, emotions=None, social=None, conversation_state=None,
+                    personality=personality_input,
+                    cond_drop_prob=0.0,
+                    skip_residuals=True
+                )
+                
+                # Grab base logits at index j-1 to predict the token at index j
+                current_frame_layer0_logits = base_logits[:, j - 1, :]
+                current_frame_layer0_logits[..., code_dim] = float('-inf')  # block the mask token
+                sampled_token = sample_top_p_k(current_frame_layer0_logits, top_p=top_p, temperature=temperature, top_k=top_k) # Shape: [B, 1]
+                # Embed the Layer 0 token
+                sampled_emb = model.motion_embedding(sampled_token) # Shape: [B, 1, d_model]
+                
+                # Predict Residuals!
+                residual_outputs = list(model.residual_predictor(
+                    features[:, j - 1 : j, :]
+                    cross_attention_condition[:, j - 1 : j, :],
+                    sampled_emb
+                ))
+                
+                # Extract and sample the residuals in a greedy fashion
+                residual_logits = residual_outputs[model.residual_predictor.n_tokens:]
+                sampled_residuals = [torch.argmax(residual_logits[i], dim=-1) for i in range(3)]
+
+                # Combine all 4 layers and write them to the history
+                next_frame_tensor = torch.cat([sampled_token] + sampled_residuals, dim=-1) # Shape: [B, 4]
+                generated_tokens[:, j, :] = next_frame_tensor
 
         # Run the autoregressive loop
         for i in range(num_chunks):
@@ -186,41 +218,30 @@ def generate_motion_sequence(device, segment_data, partner_segment_data, chunk_f
             tokens_input = generated_tokens[:, start_token:end_token, :]
             audio_input = segment_data.aligned_wav2vec_audio[start_frame:end_frame].unsqueeze(0) # Unsqueeze to add batch dimension
 
-            logits, _, features, cross_attention_condition = model(
+            base_logits, _, features, cross_attention_condition = model(
                 motion_tokens=tokens_input,
                 audio=audio_input,
                 partner_audio=None,
                 bert=None, emotions=None, social=None, conversation_state=None,
                 personality=personality_input,
-                cond_drop_prob=0.0
+                cond_drop_prob=0.0,
+                skip_residuals=True
             )
 
-            # Predict layer 0
-            next_frame_logits = logits[:, -1, :, :] # Grab the just generated motion code (last one in the sequence)
-            layer_logits = next_frame_logits[:, :, 0] # Shape: [B, vocab_size], only grab layer 0 for the main head
-            layer_logits[..., 512] = float('-inf') # block the mask token from being chosen 
-            sampled_token = sample_top_p_k(layer_logits, top_p=top_p, temperature=temperature, top_k=top_k) # Shape: [B, 1]
-            next_frame_tokens.append(sampled_token)
+            current_frame_layer0_logits = base_logits[:, -1, :] 
+            current_frame_layer0_logits[..., code_dim] = float('-inf') # Block the mask token from being chosen during nucleus sampling
+            sampled_token = sample_top_p_k(current_frame_layer0_logits, top_p=top_p, temperature=temperature, top_k=top_k) # Shape: [B, 1], sample layer 0 token
+            sampled_emb = model.motion_embedding(sampled_token) # Shape: [B, 1, d_model], embed the layer 0 token
 
-            # Predict the residual layers 1-2-3
-            next_frame_features = features[:, -1:, :]
-            next_frame_audio_cond = cross_attention_condition[:, -1:, :]
-            _, _, _, r1_logits, r2_logits, r3_logits = model.residual_predictor(
-                next_frame_features, 
-                next_frame_audio_cond
-            )
-                        
-            next_frame_tokens = []
-            # Sample each codebook layer hierarchically for this frame
-            for layer_idx in range(3):
-                layer_logits = next_frame_logits[:, :, layer_idx] # Shape: [B, vocab_size]
-                layer_logits[..., 512] = float('-inf') # block the mask token from being chosen 
-                
-                # sampled_token = torch.argmax(layer_logits, dim=-1, keepdim=True)
-                sampled_token = sample_top_p_k(layer_logits, top_p=top_p, temperature=temperature, top_k=top_k) # Shape: [B, 1]
-                next_frame_tokens.append(sampled_token)
-                
-            next_frame_tensor = torch.stack(next_frame_tokens, dim=-1).squeeze(1) # Shape: [B, 4]
+            # Get layer 1-2-3 logits
+            residual_outputs = list(model.residual_predictor(features[:, -1:, :], cross_attention_condition[:, -1:, :], sampled_emb)) # also slice down the context to only this frame
+
+            # Extract the residual logits
+            residual_logits = residual_outputs[model.residual_predictor.n_tokens:]
+
+            # Sample the residuals in a greedy fasion
+            sampled_residuals = [torch.argmax(residual_logits[i], dim=-1) for i in range(3)]
+            next_frame_tensor = torch.cat([sampled_token] + sampled_residuals, dim=-1) # Shape: [B, 4]
             
             # Assign the brand new frame directly into the pre-allocated token history
             target_idx = (end_frame // downsample_factor) - 1
