@@ -168,7 +168,8 @@ class SeamlessStage2Trainer:
             personality=dict_data["personality_traits"].to(self.device),
             conversation_state=dict_data["conversation_states"].to(self.device),
             cond_drop_prob=self.cfg_drop_prob,
-            skip_residuals=False
+            skip_residuals=False,
+            active_layer0_tokens=target_tokens[:, :, 0]
         )
         predicted_latent_vectors = self._compute_predicted_codebook_latent_vector(logits)
         
@@ -241,7 +242,8 @@ class SeamlessStage2Trainer:
             personality=dict_data["personality_traits"].to(self.device),
             conversation_state=dict_data["conversation_states"].to(self.device),
             cond_drop_prob=0.0,
-            skip_residuals=False
+            skip_residuals=False,
+            active_layer0_tokens=target_tokens[:, :, 0]
         )
         predicted_latent_vectors = self._compute_predicted_codebook_latent_vector(logits)
         

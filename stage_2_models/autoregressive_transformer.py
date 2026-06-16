@@ -168,13 +168,11 @@ class AutoRegressiveMotionTransformer(nn.Module):
         
         base_logits = self.base_classifier(features)
 
-        # If training, fall back to teacher-forcing the ground-truth Layer 0 tokens.
-        if active_layer0_tokens is None:
-            active_layer0_tokens = motion_tokens[:, :, 0]
-        layer0_emb = self.motion_embedding(active_layer0_tokens)
-
-        if skip_residuals:
+        if skip_residuals or active_layer0_tokens is None:
             return base_logits, None, features, cross_attention_condition
+
+        # If training, fall back to teacher-forcing the ground-truth Layer 0 tokens (these are essentially, the tokens we just predicted during the main head pass).
+        layer0_emb = self.motion_embedding(active_layer0_tokens)
 
         residual_outputs = list(self.residual_predictor(features, cross_attention_condition, layer0_emb))
         zqs = residual_outputs[:self.residual_predictor.n_tokens]
