@@ -1,5 +1,5 @@
 {
-    "project": "stage_2_model_ce_mse_soft",
+    "project": "stage_2_model_adjusted",
     "device": "cuda",
     "gpus": [0, 1, 2, 3],
     "workers_per_gpu": 4,
