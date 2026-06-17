@@ -1,5 +1,5 @@
 {
-    "project": "stage_2_model_high_mse_weight",
+    "project": "stage_2_model_large_data",
     "device": "cuda",
     "gpus": [0, 1, 2, 3],
     "workers_per_gpu": 4,
@@ -12,8 +12,8 @@
     },
 
     "data": {
-        "train_lmdb": "cache/training_data/training_data_stage_2_updated/training_data_stage_2_updated_train",
-        "val_lmdb": "cache/training_data/training_data_stage_2_updated/training_data_stage_2_updated_val"
+        "train_lmdb": "cache/training_data/training_data_stage_2_large/training_data_stage_2_large_train",
+        "val_lmdb": "cache/training_data/training_data_stage_2_large/training_data_stage_2_large_val"
     },
 
     "model_params": {
