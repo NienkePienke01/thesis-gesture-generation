@@ -193,11 +193,7 @@ def generate_motion_sequence(device, segment_data, partner_segment_data, chunk_f
                 sampled_emb = model.motion_embedding(sampled_token) # Shape: [B, 1, d_model]
                 
                 # Predict Residuals!
-                residual_outputs = list(model.residual_predictor(
-                    features[:, j - 1 : j, :]
-                    cross_attention_condition[:, j - 1 : j, :],
-                    sampled_emb
-                ))
+                residual_outputs = list(model.residual_predictor(features[:, j - 1 : j, :], cross_attention_condition[:, j - 1 : j, :], sampled_emb))
                 
                 # Extract and sample the residuals in a greedy fashion
                 residual_logits = residual_outputs[model.residual_predictor.n_tokens:]
