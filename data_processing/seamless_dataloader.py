@@ -37,27 +37,26 @@ class SeamlessDataLoader(Dataset):
                 "pose": torch.from_numpy(data["pose"]).float()
             }
         else:
-            output = {
-                "pose": torch.from_numpy(data["pose"]).float() if "pose" in data else None,
-                "raw_audio": torch.from_numpy(data["raw_audio"]).float() if "raw_audio" in data else None,
-                "wav2vec_audio": torch.from_numpy(data["wav2vec_audio"]).float() if "wav2vec_audio" in data else None,
-                "hubert_audio": torch.from_numpy(data["hubert_audio"]).float() if "hubert_audio" in data else None,
-                "bert": torch.from_numpy(data["bert"]).float() if "bert" in data else None,
-                "full_id": data.get("seamless_id"),
-                "semantic_scores": torch.from_numpy(data["semantic_scores"]).float() if "semantic_scores" in data else None,
-                "partner_raw_audio": torch.from_numpy(data["partner_raw_audio"]).float() if "partner_raw_audio" in data else None,
-                "partner_wav2vec_audio": torch.from_numpy(data["partner_wav2vec_audio"]).float() if "partner_wav2vec_audio" in data else None,
-                "partner_hubert_audio": torch.from_numpy(data["partner_hubert_audio"]).float() if "partner_hubert_audio" in data else None,
-                "partner_pose": torch.from_numpy(data["partner_pose"]).float() if "partner_pose" in data else None,
-                "partner_bert": torch.from_numpy(data["partner_bert"]).float() if "partner_bert" in data else None,
-                "partner_full_id": data.get("partner_seamless_id"),
-                "conversation_states": torch.from_numpy(data["conversation_states"]).long() if "conversation_states" in data else None,
-                "partner_conversation_states": torch.from_numpy(data["partner_conversation_states"]).long() if "partner_conversation_states" in data else None,
-                "social_relationship": torch.tensor(data["social_relationship"], dtype=torch.long) if "social_relationship" in data else None,
-                "personality_traits": torch.from_numpy(data["personality_traits"]).float() if "personality_traits" in data else None,
-                "partner_personality_traits": torch.from_numpy(data["partner_personality_traits"]).float() if "partner_personality_traits" in data else None,
-                "partner_emotions": torch.from_numpy(data["partner_emotions"]).int() if "partner_emotions" in data else None,
-                "emotions": torch.from_numpy(data["emotions"]).int() if "emotions" in data else None,
-            }
+            output = {}
+            if "pose" in data: output["pose"] = torch.from_numpy(data["pose"]).float()
+            if "raw_audio" in data: output["raw_audio"] = torch.from_numpy(data["raw_audio"]).float()
+            if "wav2vec_audio" in data: output["wav2vec_audio"] = torch.from_numpy(data["wav2vec_audio"]).float()
+            if "hubert_audio" in data: output["hubert_audio"] = torch.from_numpy(data["hubert_audio"]).float()
+            if "bert" in data: output["bert"] = torch.from_numpy(data["bert"]).float()
+            if "seamless_id" in data: output["full_id"] = data["seamless_id"]
+            if "semantic_scores" in data: output["semantic_scores"] = torch.from_numpy(data["semantic_scores"]).float()
+            if "partner_raw_audio" in data: output["partner_raw_audio"] = torch.from_numpy(data["partner_raw_audio"]).float()
+            if "partner_wav2vec_audio" in data: output["partner_wav2vec_audio"] = torch.from_numpy(data["partner_wav2vec_audio"]).float()
+            if "partner_hubert_audio" in data: output["partner_hubert_audio"] = torch.from_numpy(data["partner_hubert_audio"]).float()
+            if "partner_pose" in data: output["partner_pose"] = torch.from_numpy(data["partner_pose"]).float()
+            if "partner_bert" in data: output["partner_bert"] = torch.from_numpy(data["partner_bert"]).float()
+            if "partner_seamless_id" in data: output["partner_full_id"] = data["partner_seamless_id"]
+            if "conversation_states" in data: output["conversation_states"] = torch.from_numpy(data["conversation_states"]).long()
+            if "partner_conversation_states" in data: output["partner_conversation_states"] = torch.from_numpy(data["partner_conversation_states"]).long()
+            if "social_relationship" in data: output["social_relationship"] = torch.tensor(data["social_relationship"], dtype=torch.long)
+            if "personality_traits" in data: output["personality_traits"] = torch.from_numpy(data["personality_traits"]).float()
+            if "partner_personality_traits" in data: output["partner_personality_traits"] = torch.from_numpy(data["partner_personality_traits"]).float()
+            if "partner_emotions" in data: output["partner_emotions"] = torch.from_numpy(data["partner_emotions"]).int()
+            if "emotions" in data: output["emotions"] = torch.from_numpy(data["emotions"]).int()
 
         return output
