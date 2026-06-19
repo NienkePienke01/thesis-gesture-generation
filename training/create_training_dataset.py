@@ -86,18 +86,29 @@ def split_source(args):
                     
                     current_count += len(indices)
 
+                # To manually set it, so we sometimes dont use all keys (makes the dataset smaller)
+                keys_to_exclude = {"raw_audio", "hubert_audio", "sample_word", "sample_sentence", "file_path", 
+                                   "semantic_scores", "partner_raw_audio", "partner_hubert_audio", "partner_pose", "partner_bert"
+                                   }
+
+                # Dynamically determine what to keep using the very first index BEFORE the main loop
+                sample_entry = pickle.loads(src_txn.get(f"{train_indices[0]:08d}".encode("ascii")))
+                keys_to_keep = set(sample_entry.keys()) - keys_to_exclude
+
                 # Write Train portion
                 with train_env.begin(write=True) as t_txn:
                     for idx in train_indices:
-                        data = src_txn.get(f"{idx:08d}".encode("ascii"))
-                        t_txn.put(f"{train_idx:08d}".encode("ascii"), data)
+                        entry = pickle.loads(src_txn.get(f"{idx:08d}".encode("ascii")))
+                        filtered_entry = {k: v for k, v in entry.items() if k in keys_to_keep}
+                        t_txn.put(f"{train_idx:08d}".encode("ascii"), pickle.dumps(filtered_entry))
                         train_idx += 1
 
                 # Write validation portion
                 with val_env.begin(write=True) as v_txn:
                     for idx in validation_indices:
-                        data = src_txn.get(f"{idx:08d}".encode("ascii"))
-                        v_txn.put(f"{val_idx:08d}".encode("ascii"), data)
+                        entry = pickle.loads(src_txn.get(f"{idx:08d}".encode("ascii")))
+                        filtered_entry = {k: v for k, v in entry.items() if k in keys_to_keep}
+                        v_txn.put(f"{val_idx:08d}".encode("ascii"), pickle.dumps(filtered_entry))
                         val_idx += 1
 
                 manifest["sources"].append({
