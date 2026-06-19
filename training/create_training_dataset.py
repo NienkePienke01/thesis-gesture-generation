@@ -87,9 +87,10 @@ def split_source(args):
                     current_count += len(indices)
 
                 # To manually set it, so we sometimes dont use all keys (makes the dataset smaller)
-                keys_to_exclude = {"raw_audio", "hubert_audio", "sample_word", "sample_sentence", "file_path", 
-                                   "semantic_scores", "partner_raw_audio", "partner_hubert_audio", "partner_pose", "partner_bert"
-                                   }
+                # keys_to_exclude = {"raw_audio", "hubert_audio", "sample_word", "sample_sentence", "file_path", 
+                #                    "semantic_scores", "partner_raw_audio", "partner_hubert_audio", "partner_pose", "partner_bert"
+                #                    }
+                keys_to_exclude = {}
 
                 # Dynamically determine what to keep using the very first index BEFORE the main loop
                 sample_entry = pickle.loads(src_txn.get(f"{train_indices[0]:08d}".encode("ascii")))
