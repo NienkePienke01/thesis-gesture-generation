@@ -2,7 +2,7 @@
     "project": "stage_2_model_all_data",
     "device": "cuda",
     "gpus": [0, 1, 2, 3],
-    "workers_per_gpu": 4,
+    "workers_per_gpu": 16,
     "periodic_backup_after_x_epochs": 10,
     "log_period": 10,
 
