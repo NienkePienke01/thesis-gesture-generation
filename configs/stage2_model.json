@@ -12,6 +12,8 @@
     },
 
     "data": {
+        "train_lmdb_": "cache/training_data/training_data_stage_2_full/training_data_stage_2_full_train",
+        "val_lmdb_": "cache/training_data/training_data_stage_2_full/training_data_stage_2_full_val",
         "train_lmdb": "cache/training_data/training_data_stage_2_full/training_data_stage_2_full_train",
         "val_lmdb": "cache/training_data/training_data_stage_2_full/training_data_stage_2_full_val"
     },
@@ -41,7 +43,8 @@
         "min_lr_ratio": 0.05,
         "max_mask_prob": 0.40,
         "cfg_drop_prob": 0.1,
-        "soft_label_temperature": 0.05
+        "soft_label_temperature": 0.05,
+        "scheduled_sampling_prob": 0.5
     },
 
     "loss_weights": {

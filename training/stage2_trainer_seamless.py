@@ -144,6 +144,7 @@ class SeamlessStage2Trainer:
         self.model.train()
         self.optimizer.zero_grad()
         
+        # Data setup for forward pass
         target_pose = dict_data["pose"].to(self.device, non_blocking=True)
         batch_size, total_frames = target_pose.shape[0], target_pose.shape[1]
         target_pose_matrix = rc.axis_angle_to_matrix(target_pose.reshape(batch_size, total_frames, 43, 3))
@@ -152,12 +153,60 @@ class SeamlessStage2Trainer:
         ground_truth_tokens = self._extract_stage1_tokens(target_pose_6d) # torch.Size([32, 16, 4])
         
         input_tokens = ground_truth_tokens[:, :-1] # torch.Size([32, 15, 4]) tokens 0-14
-        # Token Masking, set max_mask_prob to 0 to skip this
-        input_tokens, used_mask = self._mask_ground_truth_tokens(self.args.training_params.max_mask_prob, step_percentage, input_tokens, self.code_dim)
         #
         target_tokens = ground_truth_tokens[:, 1:] # torch.Size([32, 15, 4]) tokens 1-15 (the ones we want to learn)
         target_latent_vectors = self._extract_codebook_latent_vector(target_tokens)
-        
+
+        #
+        max_scheduled_sampling_prob = getattr(self.args.training_params, "scheduled_sampling_prob", 0.5)
+        current_scheduled_sampling_prob = max_scheduled_sampling_prob * step_percentage
+
+        # Schedules sampling forward pass, the idea is we do a forward pass to know our predictions, to then do it again, with some of our predicted tokens thrown in
+        mixed_active_layer0 = target_tokens[:, :, 0]
+        if current_scheduled_sampling_prob > 0:
+            with torch.no_grad():
+                self.model.eval()
+                first_pass_logits, _, _, _ = self.model(
+                    motion_tokens=input_tokens,
+                    audio=dict_data["wav2vec_audio"].to(self.device),
+                    partner_audio=dict_data["partner_wav2vec_audio"].to(self.device),
+                    bert=dict_data["bert"].to(self.device),
+                    emotions=dict_data["emotions"].to(self.device),
+                    social=dict_data["social_relationship"].to(self.device),
+                    personality=dict_data["personality_traits"].to(self.device),
+                    conversation_state=dict_data["conversation_states"].to(self.device),
+                    cond_drop_prob=0.0,
+                    skip_residuals=True # only predict layer 0
+                )
+                predicted_layer0 = torch.argmax(first_pass_logits, dim=-1)
+                self.model.train()
+
+            B, T, L = input_tokens.shape
+
+            # we mix the Input History (Frames 1-14), so some of the tokens are predicted instead of GT
+            # also shift predicted_targets back by 1 ([:-1]) to align with input_tokens history ([1:])
+            replace_mask_inputs = torch.rand((B, T - 1), device=self.device) < current_scheduled_sampling_prob
+            mixed_input_tokens = input_tokens.clone()
+            mixed_input_tokens[:, 1:, 0] = torch.where(
+                replace_mask_inputs, 
+                predicted_layer0[:, :-1], 
+                input_tokens[:, 1:, 0]
+            )
+            input_tokens = mixed_input_tokens
+            
+            # Mix the Residual Target Layer 0
+            # Force the residual heads to occasionally learn from predicted tokens instead of ground truth
+            replace_mask_residual = torch.rand((B, T), device=self.device) < current_scheduled_sampling_prob
+            mixed_active_layer0 = torch.where(
+                replace_mask_residual, 
+                predicted_layer0, 
+                target_tokens[:, :, 0]
+            )
+
+        # Apply the token mask to sometimes completely hide tokens and make the model predict without token features: set max_mask_prob to 0 to skip this
+        # input_tokens, used_mask = self._mask_ground_truth_tokens(self.args.training_params.max_mask_prob, step_percentage, input_tokens, self.code_dim)
+
+        # Forward pass
         logits, _, _, _ = self.model(
             motion_tokens=input_tokens,
             audio=dict_data["wav2vec_audio"].to(self.device), # torch.Size([32, 64, 768])
@@ -169,10 +218,11 @@ class SeamlessStage2Trainer:
             conversation_state=dict_data["conversation_states"].to(self.device),
             cond_drop_prob=self.cfg_drop_prob,
             skip_residuals=False,
-            active_layer0_tokens=target_tokens[:, :, 0]
+            active_layer0_tokens=mixed_active_layer0 # We use predicted tokens and ground truth tokens (a mix)
         )
         predicted_latent_vectors = self._compute_predicted_codebook_latent_vector(logits)
-        
+
+        # Loss calculations
         ce_loss = 0
         masked_loss = 0
         ce_losses_layered = {}
@@ -184,7 +234,7 @@ class SeamlessStage2Trainer:
             # Reshape for soft label calculation
             logits_flat = logits[:, :, :, i].reshape(-1, logits.size(2)) 
             targets_flat = target_tokens[:, :, i].reshape(-1) 
-            mask_flat = used_mask[:, :, i].reshape(-1) 
+            # mask_flat = used_mask[:, :, i].reshape(-1) 
             
             # get soft label distribution [B*T, vocab_size]
             target_dist = self.soft_labels[layer_num][targets_flat]
@@ -198,13 +248,13 @@ class SeamlessStage2Trainer:
             ce_losses_layered[layer_display_num] = loss_all.item()
 
             # masked loss (only for masked tokens)
-            if mask_flat.any():
-                masked_target_dist = target_dist[mask_flat]
-                masked_log_probs = log_probs[mask_flat]
-                masked_loss += -(masked_target_dist * masked_log_probs).sum(dim=-1).mean()
+            # if mask_flat.any():
+            #     masked_target_dist = target_dist[mask_flat]
+            #     masked_log_probs = log_probs[mask_flat]
+            #     masked_loss += -(masked_target_dist * masked_log_probs).sum(dim=-1).mean()
         
         ce_loss = ce_loss / logits.shape[-1]
-        masked_loss = masked_loss / logits.shape[-1]
+        # masked_loss = masked_loss / logits.shape[-1]
 
         mse_loss = self.mse_loss_function(target_latent_vectors, predicted_latent_vectors)
             

@@ -95,7 +95,7 @@ def train_model(rank, gpu_amount_size, shared_port, args):
                 
         trainer.scheduler.step()
             
-        # Metrics Logging & Checkpoint Management
+        # Logging & Checkpoint
         if rank == 0 and (epoch % args.log_period == 0 or epoch == args.training_params.epochs - 1):
             avg_train_total = epoch_losses["total"] / len(train_loader)
             avg_val_total = val_losses["total"] / len(validation_loader)
