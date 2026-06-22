@@ -4,6 +4,7 @@ import numpy as np
 from dataclasses import dataclass
 import os
 import ffmpeg
+import static_ffmpeg
 import cv2 
 import pyrender
 import trimesh
@@ -579,11 +580,25 @@ def generate_reconstruction_comparison_video(loader_original, loader_reconstruct
     video_writer.release()
 
     if loader_original.meta_data.audio_file is not None and include_audio:
-        # Grab video and audio files
-        video_input = ffmpeg.input(video_path) 
+        static_ffmpeg.add_paths() # Needed for cluster use, since it does not have ffmpeg
+
+        # temporary destination path to avoid file overwrite corruption
+        temp_video_path = video_path.replace(".mp4", "_temp.mp4")
+
+        video_input = ffmpeg.input(video_path)
         audio_input = ffmpeg.input(loader_original.meta_data.audio_file)
 
-        # Merge video and audio
-        ffmpeg.output(video_input, audio_input, video_path, vcodec='copy', acodec='aac').run(overwrite_output=True)
+        # Merge audio with video streams
+        ffmpeg.output(
+            video_input, 
+            audio_input, 
+            temp_video_path, 
+            vcodec='copy', 
+            acodec='aac',
+            shortest=None # handles audio longer than video by cutting it off
+        ).run(overwrite_output=True)
+
+        # replace the silent video with the final audio video
+        os.replace(temp_video_path, video_path)
 
     return video_path

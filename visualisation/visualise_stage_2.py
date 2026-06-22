@@ -305,7 +305,7 @@ def render_stage2_generation_tab(device):
         gr.Markdown("### 1. Load System Framework (Stage 2 + Stage 1 Dependency)")
         with gr.Row():
             stage2_config = create_file_browser("Stage 2 Config Path (.json)", extensions=[".json"], file_count="single", default_value="/data/scratch/davwer_projects/mpi-thesis/configs/stage2_model.json")
-            stage2_checkpoint = create_file_browser("Stage 2 Checkpoint Path (.bin)", extensions=[".bin"], file_count="single", default_value="/data/scratch/davwer_projects/mpi-thesis/checkpoints_stage_2/stage_2_model_ce_mse_soft/20260609_2034/stage2_final_epoch_199.bin")
+            stage2_checkpoint = create_file_browser("Stage 2 Checkpoint Path (.bin)", extensions=[".bin"], file_count="single", default_value="/data/scratch/davwer_projects/mpi-thesis/checkpoints_stage_2/stage_2_model_all_data/20260621_2354/stage2_final_epoch_199.bin")
             segmenter_config = create_file_browser("Segmenter Config Path (.json)", extensions=[".json"], file_count="single", default_value="/data/scratch/davwer_projects/mpi-thesis/configs/seamless_segmenter_stage_2.json")
             
         load_pipeline_btn = gr.Button("Initialize Integrated Model Pipeline", variant="secondary")
