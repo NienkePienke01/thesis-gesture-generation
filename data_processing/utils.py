@@ -579,8 +579,6 @@ def generate_reconstruction_comparison_video(loader_original, loader_reconstruct
     video_writer.release()
 
     if loader_original.meta_data.audio_file is not None and include_audio:
-        import av
-
         temp_video_path = video_path.replace(".mp4", "_temp.mp4")
 
         # Open inputs
@@ -592,13 +590,20 @@ def generate_reconstruction_comparison_video(loader_original, loader_reconstruct
         a_stream = a_in.streams.audio[0]
 
         out_v_stream = out.add_stream(template=v_stream)
+        out_v_stream = out.add_stream('h264', rate=int(v_stream.average_rate))
+        out_v_stream.width = v_stream.width
+        out_v_stream.height = v_stream.height
+        out_v_stream.pix_fmt = 'yuv420p'
+
         out_a_stream = out.add_stream(template=a_stream)
 
-        # Mux the video packets
-        for packet in v_in.demux(v_stream):
-            if packet.dts is not None:
-                packet.stream = out_v_stream
+        for frame in v_in.decode(v_stream):
+            for packet in out_v_stream.encode(frame):
                 out.mux(packet)
+                
+        # Flush the video encoder buffer
+        for packet in out_v_stream.encode():
+            out.mux(packet)
 
         # Mux the audio packets
         for packet in a_in.demux(a_stream):
