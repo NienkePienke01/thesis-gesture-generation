@@ -580,8 +580,7 @@ def generate_reconstruction_comparison_video(loader_original, loader_reconstruct
     video_writer.release()
 
     if loader_original.meta_data.audio_file is not None and include_audio:
-        ffmpeg_bin_path = ffd.get_ffmpeg_path() 
-        # ----------------------------
+        ffd.add_path()
 
         # temporary destination path to avoid file overwrite corruption
         temp_video_path = video_path.replace(".mp4", "_temp.mp4")
@@ -597,10 +596,7 @@ def generate_reconstruction_comparison_video(loader_original, loader_reconstruct
             vcodec='copy', 
             acodec='aac',
             shortest=None 
-        ).run(
-            cmd=ffmpeg_bin_path, # forces the python wrapper to use the binary (for cluster)
-            overwrite_output=True
-        )
+        ).run(overwrite_output=True)
 
         # replace the silent video with the final audio video
         os.replace(temp_video_path, video_path)
