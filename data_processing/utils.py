@@ -3,8 +3,7 @@ import torch
 import numpy as np
 from dataclasses import dataclass
 import os
-import ffmpeg
-import ffmpeg_downloader as ffd
+import av
 import cv2 
 import pyrender
 import trimesh
@@ -580,25 +579,38 @@ def generate_reconstruction_comparison_video(loader_original, loader_reconstruct
     video_writer.release()
 
     if loader_original.meta_data.audio_file is not None and include_audio:
-        ffd.add_path()
+        import av
 
-        # temporary destination path to avoid file overwrite corruption
         temp_video_path = video_path.replace(".mp4", "_temp.mp4")
 
-        video_input = ffmpeg.input(video_path)
-        audio_input = ffmpeg.input(loader_original.meta_data.audio_file)
+        # Open inputs
+        v_in = av.open(video_path)
+        a_in = av.open(loader_original.meta_data.audio_file)
+        out = av.open(temp_video_path, mode='w')
 
-        # Merge audio with video streams
-        ffmpeg.output(
-            video_input, 
-            audio_input, 
-            temp_video_path, 
-            vcodec='copy', 
-            acodec='aac',
-            shortest=None 
-        ).run(overwrite_output=True)
+        v_stream = v_in.streams.video[0]
+        a_stream = a_in.streams.audio[0]
 
-        # replace the silent video with the final audio video
+        out_v_stream = out.add_stream(template=v_stream)
+        out_a_stream = out.add_stream(template=a_stream)
+
+        # Mux the video packets
+        for packet in v_in.demux(v_stream):
+            if packet.dts is not None:
+                packet.stream = out_v_stream
+                out.mux(packet)
+
+        # Mux the audio packets
+        for packet in a_in.demux(a_stream):
+            if packet.dts is not None:
+                packet.stream = out_a_stream
+                out.mux(packet)
+
+        v_in.close()
+        a_in.close()
+        out.close()
+
+        # Replace the silent video with the combined file
         os.replace(temp_video_path, video_path)
 
     return video_path
