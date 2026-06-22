@@ -26,6 +26,7 @@ dependencies = [
     "wandb>=0.16.0,<0.19.0",
     "ffmpeg-python>=0.2.0",
     "static-ffmpeg>=3.0",
+    "ffmpeg-downloader>=0.4.1",
 ]
 [tool.setuptools.packages.find]
 include = ["data_processing*"]
