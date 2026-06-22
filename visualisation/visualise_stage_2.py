@@ -297,7 +297,7 @@ def reconstruct_and_render(target_npz_file, device, top_k, top_p, temperature, w
 
     return stage_1_reconstruction.visualize_reconstruction(
         target_npz_file, device, batch_size, valid_frames, 
-        final_6d_pose, original_loader, progress
+        final_6d_pose, original_loader, progress, include_audio=True
     )
 
 def render_stage2_generation_tab(device):

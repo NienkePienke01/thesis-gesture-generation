@@ -3,6 +3,7 @@ import torch
 import numpy as np
 from dataclasses import dataclass
 import os
+import ffmpeg
 import cv2 
 import pyrender
 import trimesh
@@ -520,7 +521,7 @@ def generate_interaction_video(loader1, loader2, width=1280, height=720, output_
     video_writer.release()
     return video_path
 
-def generate_reconstruction_comparison_video(loader_original, loader_reconstructed, width=1280, height=720, output_directory='cache/video_cache/reconstructions', progress=None, use_cache=True):
+def generate_reconstruction_comparison_video(loader_original, loader_reconstructed, width=1280, height=720, output_directory='cache/video_cache/reconstructions', progress=None, use_cache=True, include_audio=False):
     os.makedirs(output_directory, exist_ok=True)
     sample_name = f"{loader_original.sample_name}_comparison"
     video_path = os.path.join(output_directory, f"{sample_name}.mp4")
@@ -573,7 +574,16 @@ def generate_reconstruction_comparison_video(loader_original, loader_reconstruct
         if progress is not None and i % 50 == 0:
             progress(i/num_frames, desc=f"Rendering Comparison: {i}/{num_frames}")
 
+
     renderer.delete()
     video_writer.release()
+
+    if loader_original.meta_data.audio_file is not None and include_audio:
+        # Grab video and audio files
+        video_input = ffmpeg.input(video_path) 
+        audio_input = ffmpeg.input(loader_original.meta_data.audio_file)
+
+        # Merge video and audio
+        ffmpeg.output(video_input, audio_input, video_path, vcodec='copy', acodec='aac').run(overwrite_output=True)
 
     return video_path

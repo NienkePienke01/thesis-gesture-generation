@@ -121,7 +121,7 @@ def decode_sequence(device, encoded_poses, chunk_frames, stride, num_chunks, ful
             
     return final_reconstructed_6d
 
-def visualize_reconstruction(target_npz_file, device, batch_size, valid_frames, final_reconstructed_6d, original_loader, progress):
+def visualize_reconstruction(target_npz_file, device, batch_size, valid_frames, final_reconstructed_6d, original_loader, progress, include_audio=False):
     reconstructed_6d = final_reconstructed_6d
     reconstructed_matrix = rc.rotation_6d_to_matrix(reconstructed_6d)
     final_reconstructed_pose = rc.matrix_to_axis_angle(reconstructed_matrix).reshape(batch_size * valid_frames, -1)
@@ -129,7 +129,7 @@ def visualize_reconstruction(target_npz_file, device, batch_size, valid_frames, 
     reconstructed_loader = utils.SeamlessSMPLHLoader(target_npz_file, device=device)
     reconstructed_loader.overwrite_with_reconstructed_pose(final_reconstructed_pose)
     
-    output_video_path = utils.generate_reconstruction_comparison_video(original_loader, reconstructed_loader, progress=progress, use_cache=False)
+    output_video_path = utils.generate_reconstruction_comparison_video(original_loader, reconstructed_loader, progress=progress, use_cache=False, include_audio=include_audio)
     
     return output_video_path, "Status: Side-by-Side Reconstruction Complete."
 
