@@ -3,7 +3,8 @@ import torch
 import numpy as np
 from dataclasses import dataclass
 import os
-import av
+import subprocess
+import imageio_ffmpeg
 import cv2 
 import pyrender
 import trimesh
@@ -580,40 +581,19 @@ def generate_reconstruction_comparison_video(loader_original, loader_reconstruct
 
     if loader_original.meta_data.audio_file is not None and include_audio:
         temp_video_path = video_path.replace(".mp4", "_temp.mp4")
-
-        # Open inputs
-        v_in = av.open(video_path)
-        a_in = av.open(loader_original.meta_data.audio_file)
-        out = av.open(temp_video_path, mode='w')
-
-        v_stream = v_in.streams.video[0]
-        a_stream = a_in.streams.audio[0]
-
-        out_v_stream = out.add_stream(template=v_stream)
-        out_v_stream = out.add_stream('h264', rate=int(v_stream.average_rate))
-        out_v_stream.width = v_stream.width
-        out_v_stream.height = v_stream.height
-        out_v_stream.pix_fmt = 'yuv420p'
-
-        out_a_stream = out.add_stream(template=a_stream)
-
-        for frame in v_in.decode(v_stream):
-            for packet in out_v_stream.encode(frame):
-                out.mux(packet)
-                
-        # Flush the video encoder buffer
-        for packet in out_v_stream.encode():
-            out.mux(packet)
-
-        # Mux the audio packets
-        for packet in a_in.demux(a_stream):
-            if packet.dts is not None:
-                packet.stream = out_a_stream
-                out.mux(packet)
-
-        v_in.close()
-        a_in.close()
-        out.close()
+        
+        # Get the path to the downloaded ffmpeg binary
+        ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+        
+        # Merge audio and video using ffmpeg
+        subprocess.run([
+            ffmpeg_exe, '-y', 
+            '-i', video_path, 
+            '-i', loader_original.meta_data.audio_file, 
+            '-c:v', 'copy', 
+            '-c:a', 'aac', 
+            temp_video_path
+        ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
         # Replace the silent video with the combined file
         os.replace(temp_video_path, video_path)

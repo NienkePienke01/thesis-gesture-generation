@@ -28,6 +28,7 @@ dependencies = [
     "static-ffmpeg>=3.0",
     "ffmpeg-downloader>=0.4.1",
     "av>=12.3.0",
+    "imageio-ffmpeg>=0.5.1",
 ]
 [tool.setuptools.packages.find]
 include = ["data_processing*"]
