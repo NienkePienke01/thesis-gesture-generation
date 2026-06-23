@@ -282,9 +282,29 @@ class SeamlessStage2Trainer:
         target_tokens = ground_truth_tokens[:, 1:] # torch.Size([32, 15, 4])
         target_latent_vectors = self._extract_codebook_latent_vector(target_tokens)
         
-        logits, _, _, _ = self.model(
+        # pass to get the layer 0 predictions
+        first_pass_logits, _, _, _ = self.model(
             motion_tokens=input_tokens,
-            audio=dict_data["wav2vec_audio"].to(self.device), # torch.Size([32, 64, 768])
+            audio=dict_data["wav2vec_audio"].to(self.device),
+            partner_audio=dict_data["partner_wav2vec_audio"].to(self.device),
+            bert=dict_data["bert"].to(self.device),
+            emotions=dict_data["emotions"].to(self.device),
+            social=dict_data["social_relationship"].to(self.device),
+            personality=dict_data["personality_traits"].to(self.device),
+            conversation_state=dict_data["conversation_states"].to(self.device),
+            cond_drop_prob=0.0,
+            skip_residuals=True
+        )
+        predicted_layer0 = torch.argmax(first_pass_logits, dim=-1)
+
+        simulated_input_tokens = input_tokens.clone()
+        simulated_input_tokens[:, 1:, 0] = predicted_layer0[:, :-1]
+        simulated_active_layer0 = predicted_layer0
+
+        # Pass to get the residual layers based on our predicted layer 0
+        logits, _, _, _ = self.model(
+            motion_tokens=simulated_input_tokens,
+            audio=dict_data["wav2vec_audio"].to(self.device),
             partner_audio=dict_data["partner_wav2vec_audio"].to(self.device),
             bert=dict_data["bert"].to(self.device),
             emotions=dict_data["emotions"].to(self.device),
@@ -293,7 +313,7 @@ class SeamlessStage2Trainer:
             conversation_state=dict_data["conversation_states"].to(self.device),
             cond_drop_prob=0.0,
             skip_residuals=False,
-            active_layer0_tokens=target_tokens[:, :, 0]
+            active_layer0_tokens=simulated_active_layer0
         )
         predicted_latent_vectors = self._compute_predicted_codebook_latent_vector(logits)
         
@@ -304,24 +324,20 @@ class SeamlessStage2Trainer:
             layer_num = i
             layer_display_num = i + 1
             
-            # Reshape for soft label calculation
             logits_flat = logits[:, :, :, i].reshape(-1, logits.size(2)) 
             targets_flat = target_tokens[:, :, i].reshape(-1) 
             
-            # get soft label distribution [B*T, vocab_size]
             target_dist = self.soft_labels[layer_num][targets_flat]
             
-            # compute log probabilities & soft cross entropy loss
             log_probs = F.log_softmax(logits_flat, dim=-1)
             loss_all = -(target_dist * log_probs).sum(dim=-1).mean()
             
-            # update tracking
             ce_loss += loss_all
             ce_losses_layered[layer_display_num] = loss_all.item()
 
         ce_loss = ce_loss / logits.shape[-1]
         mse_loss = self.mse_loss_function(target_latent_vectors, predicted_latent_vectors)
         
-        total_loss = ce_loss + (self.args.loss_weights.mse_weight * mse_loss)
+        total_loss = (ce_loss * self.args.loss_weights.ce_weight) + (self.args.loss_weights.mse_weight * mse_loss)
                      
         return {"total": total_loss.item(), "ce": ce_loss, "mse": mse_loss, "ce_loss_layered": ce_losses_layered}
