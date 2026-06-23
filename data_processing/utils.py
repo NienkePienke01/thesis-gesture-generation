@@ -590,8 +590,9 @@ def generate_reconstruction_comparison_video(loader_original, loader_reconstruct
             ffmpeg_exe, '-y', 
             '-i', video_path, 
             '-i', loader_original.meta_data.audio_file, 
-            '-c:v', 'copy', 
-            '-c:a', 'aac', 
+            '-c:v', 'libx264',     # Re-encode video to H.264
+            '-pix_fmt', 'yuv420p', # Enforce standard pixel format
+            '-c:a', 'aac',
             temp_video_path
         ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
