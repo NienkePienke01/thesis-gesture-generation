@@ -38,12 +38,14 @@ class Alignment(object):
         print(f"[2/6] Calculating STFT using {torch.get_num_threads()} CPU threads...")
         start_time = time.time()
         y_tensor = torch.tensor(y, dtype=torch.float32)
+
+        window = torch.hann_window(2048)
         
-        # Multi-threaded CPU processing avoids single-array cuFFT limits
         self.S = torch.stft(
             y_tensor, 
             n_fft=2048, 
             hop_length=512, 
+            window=window,
             return_complex=True, 
             center=True
         ).abs().numpy()
@@ -59,9 +61,25 @@ class Alignment(object):
         print(f"      Onset strength done in {time.time() - start_time:.2f}s")
         
         print("[5/6] Detecting raw onsets...")
-        onset_raw = librosa.onset.onset_detect(onset_envelope=self.oenv, backtrack=False)
-        if len(onset_raw) == 0:
+        start_time = time.time()
+        
+        chunk_size = 100_000 
+        onset_raw_list = []
+        
+        for i in range(0, len(self.oenv), chunk_size):
+            end_idx = min(i + chunk_size, len(self.oenv))
+            chunk_oenv = self.oenv[i:end_idx]
+            
+            chunk_onsets = librosa.onset.onset_detect(onset_envelope=chunk_oenv, backtrack=False)
+            
+            if len(chunk_onsets) > 0:
+                onset_raw_list.append(chunk_onsets + i)
+                
+        if not onset_raw_list:
             return None, None, None
+            
+        onset_raw = np.concatenate(onset_raw_list)
+        print(f"      Detected {len(onset_raw)} raw onsets in {time.time() - start_time:.2f}s")
             
         print(f"[6/6] Backtracking {len(onset_raw)} onsets...")
         start_time = time.time()
@@ -70,28 +88,6 @@ class Alignment(object):
         print(f"      Backtracking done in {time.time() - start_time:.2f}s")
         
         return onset_raw, onset_bt, onset_bt_rms
-
-    def load_pose(self, pose, t_start=None, t_end=None, pose_fps=30, without_file=False):
-        vel = pose[1:, :] - pose[:-1, :]
-        
-        vel_right_shoulder = np.linalg.norm(vel[:, R_SHOULDER*6 : (R_SHOULDER+1)*6], axis=1)
-        vel_right_arm = np.linalg.norm(vel[:, R_ELBOW*6 : (R_ELBOW+1)*6], axis=1)
-        vel_right_wrist = np.linalg.norm(vel[:, R_WRIST*6 : (R_WRIST+1)*6], axis=1)
-        
-        beat_right_arm = argrelextrema(vel_right_arm, np.less, order=self.order)
-        beat_right_shoulder = argrelextrema(vel_right_shoulder, np.less, order=self.order)
-        beat_right_wrist = argrelextrema(vel_right_wrist, np.less, order=self.order)
-        
-        vel_left_shoulder = np.linalg.norm(vel[:, L_SHOULDER*6 : (L_SHOULDER+1)*6], axis=1)
-        vel_left_arm = np.linalg.norm(vel[:, L_ELBOW*6 : (L_ELBOW+1)*6], axis=1)
-        vel_left_wrist = np.linalg.norm(vel[:, L_WRIST*6 : (L_WRIST+1)*6], axis=1)
-        
-        beat_left_arm = argrelextrema(vel_left_arm, np.less, order=self.order)
-        beat_left_shoulder = argrelextrema(vel_left_shoulder, np.less, order=self.order)
-        beat_left_wrist = argrelextrema(vel_left_wrist, np.less, order=self.order)
-        
-        return (beat_right_arm, beat_right_shoulder, beat_right_wrist,
-                beat_left_arm, beat_left_shoulder, beat_left_wrist)
 
     @staticmethod
     def motion_frames2time(vel, offset, pose_fps):
