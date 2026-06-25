@@ -12,6 +12,7 @@ import numpy as np
 from data_processing.utils import get_smplh_model
 from utils import rotation_conversions as rc
 import torchaudio.transforms as T
+import time
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -28,28 +29,45 @@ class Alignment(object):
         self.times = self.oenv = self.S = self.rms = None
 
     def load_audio(self, wave, t_start=None, t_end=None, without_file=False, sr_audio=16000):
+        print("[1/6] Formatting audio array...")
         if without_file:
-            y = wave
-            sr = sr_audio
+            y, sr = wave, sr_audio
         else:
             y, sr = librosa.load(wave, sr=sr_audio)
-            
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        y_tensor = torch.tensor(y, dtype=torch.float32, device=device)
+
+        print(f"[2/6] Calculating STFT using {torch.get_num_threads()} CPU threads...")
+        start_time = time.time()
+        y_tensor = torch.tensor(y, dtype=torch.float32)
         
-        spec_transform = T.Spectrogram(n_fft=2048, hop_length=512, power=None).to(device)
-        self.S = spec_transform(y_tensor).abs().cpu().numpy()
+        # Multi-threaded CPU processing avoids single-array cuFFT limits
+        self.S = torch.stft(
+            y_tensor, 
+            n_fft=2048, 
+            hop_length=512, 
+            return_complex=True, 
+            center=True
+        ).abs().numpy()
+        print(f"      STFT done in {time.time() - start_time:.2f}s")
         
+        print("[3/6] Calculating RMS energy...")
         self.rms = librosa.feature.rms(S=self.S)
+        
+        print("[4/6] Calculating onset strength...")
+        start_time = time.time()
         self.oenv = librosa.onset.onset_strength(S=self.S, sr=sr)
         self.times = librosa.times_like(self.oenv, sr=sr)
+        print(f"      Onset strength done in {time.time() - start_time:.2f}s")
         
+        print("[5/6] Detecting raw onsets...")
         onset_raw = librosa.onset.onset_detect(onset_envelope=self.oenv, backtrack=False)
         if len(onset_raw) == 0:
             return None, None, None
             
+        print(f"[6/6] Backtracking {len(onset_raw)} onsets...")
+        start_time = time.time()
         onset_bt = librosa.onset.onset_backtrack(onset_raw, self.oenv)
         onset_bt_rms = librosa.onset.onset_backtrack(onset_raw, self.rms[0])
+        print(f"      Backtracking done in {time.time() - start_time:.2f}s")
         
         return onset_raw, onset_bt, onset_bt_rms
 
