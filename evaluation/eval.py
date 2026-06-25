@@ -27,9 +27,7 @@ class Alignment(object):
         self.times = self.oenv = self.S = self.rms = None
 
     def load_audio(self, wave, t_start=None, t_end=None, without_file=False, sr_audio=16000, chunk_size=300):
-        print("heree")
         if without_file:
-            print("loading audio")
             y = wave
             sr = sr_audio
         else:
@@ -41,16 +39,19 @@ class Alignment(object):
         oenv_chunks = []
         rms_chunks = []
         
+        print("handling in chunks")
         # Process in chunks to extract envelope and RMS
         for i in range(0, len(y), samples_per_chunk):
             chunk = y[i : i + samples_per_chunk]
             oenv_chunks.append(librosa.onset.onset_strength(y=chunk, sr=sr))
             S = np.abs(librosa.stft(y=chunk))
             rms_chunks.append(librosa.feature.rms(S=S)[0])
-            
+        
+        print("made it here")
         self.oenv = np.concatenate(oenv_chunks)
         self.rms = np.concatenate(rms_chunks)
         self.times = librosa.times_like(self.oenv, sr=sr)
+        print("now here")
         
         # Now detect onsets on the full aggregated envelope
         onset_raw = librosa.onset.onset_detect(onset_envelope=self.oenv, sr=sr, backtrack=False)
@@ -199,9 +200,7 @@ def main(args):
     print("="*40)
     print("1. CALCULATING BEAT ALIGNMENT (6D Space)")
     print("="*40)
-    
-    print(f"audio data has a shape of {audio_data.shape}")
-    print("made it here")
+
     align = Alignment(sigma=3, order=4)
     onset_raw, onset_bt, onset_bt_rms = align.load_audio(wave=audio_data, without_file=True, sr_audio=16000)
     
@@ -243,7 +242,7 @@ def main(args):
     gt_motion_last = gt_motion.reshape(-1, feature_dim)
     
     # Kinematic Diversity 
-    # (Matches Audio2Photoreal reference: var across time/frames)
+    # (Matches Audio2Photoreal)
     var_k = np.var(pred_3d, axis=0) 
     print(f"Kinematic Diversity (var_k): {var_k.mean():.4f}")
 
