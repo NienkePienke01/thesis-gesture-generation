@@ -16,8 +16,6 @@ import torch
 import numpy as np
 from data_processing.utils import get_smplh_model
 from utils import rotation_conversions as rc
-import torchaudio.transforms as T
-import time
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -34,51 +32,59 @@ class Alignment(object):
         self.times = self.oenv = self.S = self.rms = None
 
     def load_audio(self, wave, t_start=None, t_end=None, without_file=False, sr_audio=16000):
-        print("[1/6] Formatting audio array...")
+        print("[1/3] Formatting audio array...")
         if without_file:
             y, sr = wave, sr_audio
         else:
             y, sr = librosa.load(wave, sr=sr_audio)
 
-        # Keep PyTorch fast for the STFT calculation
-        torch.set_num_threads(64) 
-        print(f"[2/6] Calculating STFT using {torch.get_num_threads()} CPU threads...")
-        start_time = time.time()
-        y_tensor = torch.tensor(y, dtype=torch.float32)
+        chunk_samples = 5 * 60 * sr 
+        total_chunks = int(np.ceil(len(y) / chunk_samples))
         
-        window = torch.hann_window(2048)
-        self.S = torch.stft(
-            y_tensor, 
-            n_fft=2048, 
-            hop_length=512, 
-            window=window,
-            return_complex=True, 
-            center=True
-        ).abs().numpy()
-        print(f"      STFT done in {time.time() - start_time:.2f}s")
-        
-        print("[3/6] Calculating RMS energy...")
-        self.rms = librosa.feature.rms(S=self.S)
-        
-        print("[4/6] Calculating onset strength...")
-        start_time = time.time()
-        self.oenv = librosa.onset.onset_strength(S=self.S, sr=sr)
-        self.times = librosa.times_like(self.oenv, sr=sr)
-        print(f"      Onset strength done in {time.time() - start_time:.2f}s")
-        
-        print("[5/6] Detecting raw onsets...")
-        start_time = time.time()
-        # Single-threaded now, avoiding the silent SciPy crash
-        onset_raw = librosa.onset.onset_detect(onset_envelope=self.oenv, sr=sr, backtrack=False)
-        if len(onset_raw) == 0:
-            return None, None, None
-        print(f"      Detected {len(onset_raw)} raw onsets in {time.time() - start_time:.2f}s")
+        S_list, rms_list, oenv_list = [], [], []
+        onset_raw_list, onset_bt_list, onset_bt_rms_list = [], [], []
+        frame_offset = 0
+
+        print(f"[2/3] Processing {total_chunks} chunks through original librosa pipeline...")
+        for i in range(total_chunks):
+            start_idx = i * chunk_samples
+            end_idx = min((i + 1) * chunk_samples, len(y))
+            y_chunk = y[start_idx:end_idx]
             
-        print(f"[6/6] Backtracking {len(onset_raw)} onsets...")
-        start_time = time.time()
-        onset_bt = librosa.onset.onset_backtrack(onset_raw, self.oenv)
-        onset_bt_rms = librosa.onset.onset_backtrack(onset_raw, self.rms[0])
-        print(f"      Backtracking done in {time.time() - start_time:.2f}s")
+            # Exact original calculations
+            oenv_chunk = librosa.onset.onset_strength(y=y_chunk, sr=sr)
+            S_chunk = np.abs(librosa.stft(y=y_chunk))
+            rms_chunk = librosa.feature.rms(S=S_chunk)
+            
+            onset_raw_chunk = librosa.onset.onset_detect(onset_envelope=oenv_chunk, backtrack=False)
+            
+            # Backtrack and apply the global frame offset
+            if len(onset_raw_chunk) > 0:
+                onset_bt_chunk = librosa.onset.onset_backtrack(onset_raw_chunk, oenv_chunk)
+                onset_bt_rms_chunk = librosa.onset.onset_backtrack(onset_raw_chunk, rms_chunk[0])
+                
+                onset_raw_list.append(onset_raw_chunk + frame_offset)
+                onset_bt_list.append(onset_bt_chunk + frame_offset)
+                onset_bt_rms_list.append(onset_bt_rms_chunk + frame_offset)
+            
+            S_list.append(S_chunk)
+            rms_list.append(rms_chunk)
+            oenv_list.append(oenv_chunk)
+            
+            frame_offset += len(oenv_chunk)
+
+        print("[3/3] Stitching arrays to finalize alignment object...")
+        self.S = np.concatenate(S_list, axis=1)
+        self.rms = np.concatenate(rms_list, axis=1)
+        self.oenv = np.concatenate(oenv_list, axis=0)
+        self.times = librosa.times_like(self.oenv, sr=sr)
+        
+        if not onset_raw_list:
+            return None, None, None
+            
+        onset_raw = np.concatenate(onset_raw_list)
+        onset_bt = np.concatenate(onset_bt_list)
+        onset_bt_rms = np.concatenate(onset_bt_rms_list)
         
         return onset_raw, onset_bt, onset_bt_rms
 
