@@ -41,13 +41,17 @@ class Alignment(object):
         rms_chunks = []
         current_frame_offset = 0
         
+        print("made it here")
         for i in range(0, len(y), samples_per_chunk):
             chunk = y[i : i + samples_per_chunk]
             oenv_chunk = librosa.onset.onset_strength(y=chunk, sr=sr)
             
             # Detect onsets locally within the chunk
+            print("made it hereeee")
             chunk_onsets = librosa.onset.onset_detect(onset_envelope=oenv_chunk, sr=sr, backtrack=False)
             onset_indices.append(chunk_onsets + current_frame_offset)
+
+            print("made it hereeeeeeeee")
             
             # Aggregate data for later global backtracking
             oenv_chunks.append(oenv_chunk)
