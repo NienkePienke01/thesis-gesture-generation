@@ -23,6 +23,7 @@ os.environ['PYOPENGL_PLATFORM'] = 'egl'
 os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 
 def reconstruct_and_render_for_eval(target_npz_file, device, top_k, top_p, temperature, warm_start):
+    print(f"We are now handling: {target_npz_file}")
     setup_data = setup_reconstruction(target_npz_file, device, load_vertices=False)
     if isinstance(setup_data, tuple) and len(setup_data) == 2: # for if the model is not loaded
         return setup_data

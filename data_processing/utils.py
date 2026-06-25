@@ -422,6 +422,9 @@ class SeamlessSMPLHLoader(GenericLoader):
         """
         # get the .body (21 joints) as the 13 joints we want to train (upper body only)
         body_filtered = self.SMPLParams.body[:, self.keep_indices, :]
+
+        if body_filtered.numel() == 0:
+            return torch.empty((body_filtered.shape[0], 0))
         
         # Flatten each component
         flattened_body = body_filtered.reshape(body_filtered.shape[0], -1)
