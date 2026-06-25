@@ -126,8 +126,10 @@ def get_seamless_meta_data(base_path, data):
             hand_coords = meta_data.keypoints[:, hand_indices, :2] # only use the x and y coords
             displacements = np.linalg.norm(hand_coords[1:] - hand_coords[:-1], axis=2) # calculate movement (temporal variance)
             intensity = np.mean(displacements, axis=1)
-            meta_data.movement_intensity = np.concatenate(([0], intensity))
-            meta_data.movement_intensity_peak_threshold = np.percentile(intensity, 75)
+            if intensity.size > 0:
+                meta_data.movement_intensity_peak_threshold = np.percentile(intensity, 75)
+            else:
+                meta_data.movement_intensity_peak_threshold = 0.0
             # Hand off screen detection
             if meta_data.boxes is not None:
                 limit_x = np.max(meta_data.boxes[:, [0, 2]])
