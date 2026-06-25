@@ -18,12 +18,20 @@ from data_processing.seamless_dataset import SeamlessDataset
 import visualisation.reconstruction_tab_whole_body as stage_1_reconstruction
 from visualisation.visualise_stage_2 import sample_top_p_k, generate_motion_sequence, setup_reconstruction, _stage2_runtime_cache, load_stage2_and_stage1_pipeline
 from datetime import datetime
+import time
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 os.environ['PYOPENGL_PLATFORM'] = 'egl'
 os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 
+import time
+
 def reconstruct_and_render_for_eval(target_npz_file, device, top_k, top_p, temperature, warm_start, batch_size):
+    start_time = time.perf_counter()
+    
+    setup_start = time.perf_counter()
     setup_data = setup_reconstruction(target_npz_file, device)
+    print(f"setup_reconstruction took: {time.perf_counter() - setup_start:.4f}s")
+    
     if isinstance(setup_data, tuple) and len(setup_data) == 2: # for if the model is not loaded
         return setup_data
 
@@ -34,12 +42,14 @@ def reconstruct_and_render_for_eval(target_npz_file, device, top_k, top_p, tempe
     num_chunks = math.floor((num_frames - chunk_frames) / stride) + 1
 
     # Do inference on stage 2
+    gen_start = time.perf_counter()
     pose_codes = generate_motion_sequence(
         device, 
         segment_data, partner_segment_data, 
         chunk_frames, stride, num_chunks, batch_size, 
         temperature=temperature, top_p=top_p, top_k=top_k, warm_start=warm_start
     )
+    print(f"generate_motion_sequence took: {time.perf_counter() - gen_start:.4f}s")
 
     # Turn the large tensor of motion codes into a list of tensors of size "16" to match stage 1 reconstruction
     downsample_factor =  _stage2_runtime_cache["stage1_model"].downsample_factor
@@ -61,18 +71,20 @@ def reconstruct_and_render_for_eval(target_npz_file, device, top_k, top_p, tempe
     fade_in = torch.linspace(0.0, 1.0, steps=pre_frames, device=device).view(1, -1, 1, 1)
     fade_out = torch.linspace(1.0, 0.0, steps=pre_frames, device=device).view(1, -1, 1, 1)
 
+    recon_start = time.perf_counter()
     final_6d_pose = stage_1_reconstruction.decode_sequence(
         device, pose_codes_list, chunk_frames, stride, num_chunks, 
         full_body_joint_count, batch_size, pre_frames, 
         final_reconstructed_6d, weight_mask, fade_in, fade_out, model=_stage2_runtime_cache["stage1_model"]
     )
+    print(f"decode_sequence took: {time.perf_counter() - recon_start:.4f}s")
 
     # Convert Ground Truth to 6D
     gt_pose_sliced = segment_data.aligned_pose[:valid_frames].unsqueeze(0).to(device)
     gt_pose_matrix = rc.axis_angle_to_matrix(gt_pose_sliced.reshape(batch_size, valid_frames, 43, 3))
     gt_6d_pose = rc.matrix_to_rotation_6d(gt_pose_matrix)
 
-    # Crop to min frames to ensure perfectly aligned arrays
+    # Crop to min frames to ensure aligned arrays
     min_frames = min(final_6d_pose.shape[1], gt_6d_pose.shape[1])
     
     pred_6d = final_6d_pose[0, :min_frames, ...].reshape(min_frames, 258)
@@ -83,13 +95,14 @@ def reconstruct_and_render_for_eval(target_npz_file, device, top_k, top_p, tempe
     audio_sr = _stage2_runtime_cache["segmenter"].audio_sr
     expected_audio_samples = int((min_frames / fps) * audio_sr)
     
-    # Handle tensor vs numpy array gracefully
+    # Handle tensor vs numpy array
     raw_audio = segment_data.aligned_raw_audio
     if torch.is_tensor(raw_audio):
         raw_audio = raw_audio.cpu().numpy()
         
     audio_cropped = raw_audio[:expected_audio_samples]
 
+    print(f"Total function execution took: {time.perf_counter() - start_time:.4f}s")
     return pred_6d.cpu().numpy(), gt_6d.cpu().numpy(), audio_cropped
 
 def run_batch_inference(args):
@@ -109,25 +122,22 @@ def run_batch_inference(args):
     print(f"Loading dataset from {args.test_folder}...")
     dataset = SeamlessDataset(args.test_folder)
     print(f"Found {len(dataset)} valid interaction files based on manifest.")
-    
-    # batching
-    file_ids = dataset.file_ids
-    batches = [file_ids[i:i + args.batch_size] for i in range(0, len(file_ids), args.batch_size)]
-    
 
     # Run Inference Loop
     all_pred = []
     all_gt = []
     all_audio = []
-
-    for batch_ids in tqdm(batches, desc="Generating Gestures"):
-        batch_paths = [str(dataset.samples.get(fid)) for fid in batch_ids if dataset.samples.get(fid)]
+    
+    for file_id in tqdm(dataset.file_ids, desc="Generating Gestures"):
+        file_path = dataset.samples.get(file_id)
+        if not file_path:
+            print(f"Warning: {file_id} missing from mapped samples, skipping.")
+            continue
         
-        # You must update reconstruct_and_render_for_eval to accept a list of paths
+        # Get the predicted 6d output values
         pred_6d, gt_6d, raw_audio = reconstruct_and_render_for_eval(
-            batch_paths, device, args.top_k, args.top_p, args.temperature, args.warm_start, len(batch_paths)
-        )
-        
+                str(file_path), device, args.top_k, args.top_p, args.temperature, args.warm_start, args.batch_size
+            )
         if pred_6d is not None:
             all_pred.append(pred_6d)
             all_gt.append(gt_6d)
