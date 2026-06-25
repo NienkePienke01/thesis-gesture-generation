@@ -131,7 +131,7 @@ def get_seamless_meta_data(base_path, data):
             else:
                 meta_data.movement_intensity_peak_threshold = 0.0
             # Hand off screen detection
-            if meta_data.boxes is not None:
+            if meta_data.boxes is not None and meta_data.boxes.size > 0:
                 limit_x = np.max(meta_data.boxes[:, [0, 2]])
                 limit_y = np.max(meta_data.boxes[:, [1, 3]])
                 offscreen_values = []
