@@ -11,6 +11,7 @@ import torch
 import numpy as np
 from data_processing.utils import get_smplh_model
 from utils import rotation_conversions as rc
+import torchaudio.transforms as T
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -26,52 +27,29 @@ class Alignment(object):
         self.order = order
         self.times = self.oenv = self.S = self.rms = None
 
-    def load_audio(self, wave, t_start=None, t_end=None, without_file=False, sr_audio=16000, chunk_size=300):
+    def load_audio(self, wave, t_start=None, t_end=None, without_file=False, sr_audio=16000):
         if without_file:
             y = wave
             sr = sr_audio
         else:
             y, sr = librosa.load(wave, sr=sr_audio)
+            
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        y_tensor = torch.tensor(y, dtype=torch.float32, device=device)
         
-        sr = sr_audio
-        samples_per_chunk = chunk_size * sr
+        spec_transform = T.Spectrogram(n_fft=2048, hop_length=512, power=None).to(device)
+        self.S = spec_transform(y_tensor).abs().cpu().numpy()
         
-        onset_indices = []
-        oenv_chunks = []
-        rms_chunks = []
-        current_frame_offset = 0
-        
-        print("made it here")
-        for i in range(0, len(y), samples_per_chunk):
-            chunk = y[i : i + samples_per_chunk]
-            oenv_chunk = librosa.onset.onset_strength(y=chunk, sr=sr)
-            
-            # Detect onsets locally within the chunk
-            print("made it hereeee")
-            chunk_onsets = librosa.onset.onset_detect(onset_envelope=oenv_chunk, sr=sr, backtrack=False)
-            onset_indices.append(chunk_onsets + current_frame_offset)
-
-            print("made it hereeeeeeeee")
-            
-            # Aggregate data for later global backtracking
-            oenv_chunks.append(oenv_chunk)
-            S = np.abs(librosa.stft(y=chunk))
-            rms_chunks.append(librosa.feature.rms(S=S)[0])
-            
-            current_frame_offset += len(oenv_chunk)
-            
-        self.oenv = np.concatenate(oenv_chunks)
-        self.rms = np.concatenate(rms_chunks)
+        self.rms = librosa.feature.rms(S=self.S)
+        self.oenv = librosa.onset.onset_strength(S=self.S, sr=sr)
         self.times = librosa.times_like(self.oenv, sr=sr)
         
-        onset_raw = np.concatenate(onset_indices) if onset_indices else np.array([])
-        
+        onset_raw = librosa.onset.onset_detect(onset_envelope=self.oenv, backtrack=False)
         if len(onset_raw) == 0:
             return None, None, None
             
-        # Backtrack on the full, reconstructed sequences
         onset_bt = librosa.onset.onset_backtrack(onset_raw, self.oenv)
-        onset_bt_rms = librosa.onset.onset_backtrack(onset_raw, self.rms)
+        onset_bt_rms = librosa.onset.onset_backtrack(onset_raw, self.rms[0])
         
         return onset_raw, onset_bt, onset_bt_rms
 
@@ -210,7 +188,7 @@ def main(args):
     print("="*40)
     print("1. CALCULATING BEAT ALIGNMENT (6D Space)")
     print("="*40)
-
+    
     align = Alignment(sigma=3, order=4)
     onset_raw, onset_bt, onset_bt_rms = align.load_audio(wave=audio_data, without_file=True, sr_audio=16000)
     
@@ -252,7 +230,7 @@ def main(args):
     gt_motion_last = gt_motion.reshape(-1, feature_dim)
     
     # Kinematic Diversity 
-    # (Matches Audio2Photoreal)
+    # (Matches Audio2Photoreal reference: var across time/frames)
     var_k = np.var(pred_3d, axis=0) 
     print(f"Kinematic Diversity (var_k): {var_k.mean():.4f}")
 
