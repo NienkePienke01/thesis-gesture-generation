@@ -2,6 +2,7 @@ import os
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
 
 import librosa
 import argparse
@@ -16,6 +17,8 @@ import torch
 import numpy as np
 from data_processing.utils import get_smplh_model
 from utils import rotation_conversions as rc
+import gc
+import time
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -47,6 +50,7 @@ class Alignment(object):
 
         print(f"[2/3] Processing {total_chunks} chunks through original librosa pipeline...")
         for i in range(total_chunks):
+            start_time = time.time()
             start_idx = i * chunk_samples
             end_idx = min((i + 1) * chunk_samples, len(y))
             y_chunk = y[start_idx:end_idx]
@@ -72,6 +76,9 @@ class Alignment(object):
             oenv_list.append(oenv_chunk)
             
             frame_offset += len(oenv_chunk)
+            del y_chunk
+            gc.collect()
+            print(f"      -> Chunk {i+1:02d}/{total_chunks} completed in {time.time() - start_time:.2f}s")
 
         print("[3/3] Stitching arrays to finalize alignment object...")
         self.S = np.concatenate(S_list, axis=1)
