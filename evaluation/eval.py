@@ -1,3 +1,8 @@
+import os
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+
 import librosa
 import argparse
 from scipy.signal import argrelextrema
@@ -35,12 +40,13 @@ class Alignment(object):
         else:
             y, sr = librosa.load(wave, sr=sr_audio)
 
+        # Keep PyTorch fast for the STFT calculation
+        torch.set_num_threads(64) 
         print(f"[2/6] Calculating STFT using {torch.get_num_threads()} CPU threads...")
         start_time = time.time()
         y_tensor = torch.tensor(y, dtype=torch.float32)
-
-        window = torch.hann_window(2048)
         
+        window = torch.hann_window(2048)
         self.S = torch.stft(
             y_tensor, 
             n_fft=2048, 
@@ -62,23 +68,10 @@ class Alignment(object):
         
         print("[5/6] Detecting raw onsets...")
         start_time = time.time()
-        
-        chunk_size = 100_000 
-        onset_raw_list = []
-        
-        for i in range(0, len(self.oenv), chunk_size):
-            end_idx = min(i + chunk_size, len(self.oenv))
-            chunk_oenv = self.oenv[i:end_idx]
-            
-            chunk_onsets = librosa.onset.onset_detect(onset_envelope=chunk_oenv, backtrack=False)
-            
-            if len(chunk_onsets) > 0:
-                onset_raw_list.append(chunk_onsets + i)
-                
-        if not onset_raw_list:
+        # Single-threaded now, avoiding the silent SciPy crash
+        onset_raw = librosa.onset.onset_detect(onset_envelope=self.oenv, sr=sr, backtrack=False)
+        if len(onset_raw) == 0:
             return None, None, None
-            
-        onset_raw = np.concatenate(onset_raw_list)
         print(f"      Detected {len(onset_raw)} raw onsets in {time.time() - start_time:.2f}s")
             
         print(f"[6/6] Backtracking {len(onset_raw)} onsets...")
