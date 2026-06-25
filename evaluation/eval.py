@@ -27,21 +27,23 @@ class Alignment(object):
         self.times = self.oenv = self.S = self.rms = None
 
     def load_audio(self, wave, t_start=None, t_end=None, without_file=False, sr_audio=16000):
+        print("heree")
         if without_file:
+            print("loading audio")
             y = wave
             sr = sr_audio
         else:
-            print("Attempting to load audio...")
             y, sr = librosa.load(wave, sr=sr_audio)
-            print("Audio loaded successfully.")
-            
+        
+        print("we are here")
         self.oenv = librosa.onset.onset_strength(y=y, sr=sr)
         self.times = librosa.times_like(self.oenv, sr=sr)
         
         onset_raw = librosa.onset.onset_detect(onset_envelope=self.oenv, backtrack=False)
         if len(onset_raw) == 0:
             return None, None, None
-            
+        
+        print("we made it here")
         onset_bt = librosa.onset.onset_backtrack(onset_raw, self.oenv)
         self.S = np.abs(librosa.stft(y=y))
         self.rms = librosa.feature.rms(S=self.S)
