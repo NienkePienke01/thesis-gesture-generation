@@ -185,6 +185,7 @@ def main(args):
     print("1. CALCULATING BEAT ALIGNMENT (6D Space)")
     print("="*40)
     
+    print("made it here")
     align = Alignment(sigma=3, order=4)
     onset_raw, onset_bt, onset_bt_rms = align.load_audio(wave=audio_data, without_file=True, sr_audio=16000)
     
