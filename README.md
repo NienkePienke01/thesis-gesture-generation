@@ -99,6 +99,8 @@ Just make sure you are the owner of the file by checking with `ls -l uv_sync_clu
 * **Launch the Stage 1 training process.** `uv run -m training.train_ae_trainer_seamless --config configs/seamless_stage_1_upper_training.json`
 * **Launch the Stage 2 training process.** `uv run -m training.train_stage2_trainer --config configs/stage2_model.json`
 * **Run the Gradio interface to inspect/compare motions and videos** `uv run python -m visualisation.gradio_visualisation`
+* **Get the predicted stage 2 motion for evaluation.** `uv run python -m evaluation.get_stage_2_results --stage2_config configs/stage2_model_local.json --stage2_checkpoint checkpoints_stage_2/stage2_final_epoch_199.bin --segmenter_config configs/seamless_segmenter_stage_2.json --test_folder data/seamless/downloads/stage_2_data`
+* **Get the evaluation metrics for a predicted stage two file.** `uv run python -m evaluation.eval --results evaluation_results/filename.npy`
 
 For the MPI cluster you need to clear your PYTHONPATH so to run the uv command it is not simply `uv run python -m` but instead
 `env -u PYTHONPATH -u PYTHONHOME uv run python -m`

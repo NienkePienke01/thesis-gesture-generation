@@ -21,6 +21,7 @@ os.environ['PYOPENGL_PLATFORM'] = 'egl'
 os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 
 _stage2_runtime_cache = {
+    "project_name": None,
     "stage1_model": None,
     "stage2_model": None,
     "max_seq_len": None,
@@ -59,6 +60,7 @@ def load_stage2_and_stage1_pipeline(stage2_config_path, stage2_checkpoint_path, 
         stage2_model.eval()
         
         # Additional cache info
+        _stage2_runtime_cache["project_name"] = args.project
         _stage2_runtime_cache["stage1_model"] = stage1_model
         _stage2_runtime_cache["stage2_model"] = stage2_model
         _stage2_runtime_cache["max_seq_len"] = args.model_params.max_seq_len

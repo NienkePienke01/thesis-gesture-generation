@@ -31,6 +31,9 @@ cache/training_data/
 
 cache/gradio_tmp/
 
+evaluation_metrics_results/
+evaluation_results/
+
 # Ignore checkpoints
 checkpoints/*.bin
 checkpoints_stage_2/
