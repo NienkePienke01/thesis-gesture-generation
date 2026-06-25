@@ -151,14 +151,13 @@ def generate_motion_sequence(device, segment_data, partner_segment_data, chunk_f
     #
     with torch.no_grad():
         model = _stage2_runtime_cache["stage2_model"]
-        generated_tokens[:, 0, :] = torch.randint(0, code_dim, (batch_size, 1, 4), device=device) # Set the first token to a random seed token
+        generated_tokens[:, 0, :] = torch.randint(0, code_dim, (batch_size, 1, downsample_factor), device=device) # Set the first token to a random seed token
         # Generate the initial 15 frames for the first chunk
         if warm_start:
             # Grab the raw pose for the first 64 frames
             gt_pose_chunk = segment_data.aligned_pose[0:chunk_frames].unsqueeze(0).to(device) # Shape: [1, 64, 129]
             
             # Reshape and convert to 6D Rotations (43 joints * 6)
-            batch_size = gt_pose_chunk.shape[0]
             full_body_joint_count = 43
             
             gt_pose_matrix = rc.axis_angle_to_matrix(gt_pose_chunk.reshape(batch_size, chunk_frames, full_body_joint_count, 3))

@@ -109,22 +109,25 @@ def run_batch_inference(args):
     print(f"Loading dataset from {args.test_folder}...")
     dataset = SeamlessDataset(args.test_folder)
     print(f"Found {len(dataset)} valid interaction files based on manifest.")
+    
+    # batching
+    file_ids = dataset.file_ids
+    batches = [file_ids[i:i + args.batch_size] for i in range(0, len(file_ids), args.batch_size)]
+    
 
     # Run Inference Loop
     all_pred = []
     all_gt = []
     all_audio = []
-    
-    for file_id in tqdm(dataset.file_ids, desc="Generating Gestures"):
-        file_path = dataset.samples.get(file_id)
-        if not file_path:
-            print(f"Warning: {file_id} missing from mapped samples, skipping.")
-            continue
+
+    for batch_ids in tqdm(batches, desc="Generating Gestures"):
+        batch_paths = [str(dataset.samples.get(fid)) for fid in batch_ids if dataset.samples.get(fid)]
         
-        # Get the predicted 6d output values
+        # You must update reconstruct_and_render_for_eval to accept a list of paths
         pred_6d, gt_6d, raw_audio = reconstruct_and_render_for_eval(
-                str(file_path), device, args.top_k, args.top_p, args.temperature, args.warm_start, args.batch_size
-            )
+            batch_paths, device, args.top_k, args.top_p, args.temperature, args.warm_start, len(batch_paths)
+        )
+        
         if pred_6d is not None:
             all_pred.append(pred_6d)
             all_gt.append(gt_6d)
