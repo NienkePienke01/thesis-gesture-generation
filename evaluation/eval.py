@@ -56,9 +56,11 @@ class Alignment(object):
         # Now detect onsets on the full aggregated envelope
         onset_raw = librosa.onset.onset_detect(onset_envelope=self.oenv, sr=sr, backtrack=False)
         
+        print("now hereeee")
         if len(onset_raw) == 0:
             return None, None, None
-            
+        
+        print("finally here")
         # Backtrack on the full sequences
         onset_bt = librosa.onset.onset_backtrack(onset_raw, self.oenv)
         onset_bt_rms = librosa.onset.onset_backtrack(onset_raw, self.rms)
