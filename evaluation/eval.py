@@ -36,32 +36,36 @@ class Alignment(object):
         sr = sr_audio
         samples_per_chunk = chunk_size * sr
         
+        onset_indices = []
         oenv_chunks = []
         rms_chunks = []
+        current_frame_offset = 0
         
-        print("handling in chunks")
-        # Process in chunks to extract envelope and RMS
         for i in range(0, len(y), samples_per_chunk):
             chunk = y[i : i + samples_per_chunk]
-            oenv_chunks.append(librosa.onset.onset_strength(y=chunk, sr=sr))
+            oenv_chunk = librosa.onset.onset_strength(y=chunk, sr=sr)
+            
+            # Detect onsets locally within the chunk
+            chunk_onsets = librosa.onset.onset_detect(onset_envelope=oenv_chunk, sr=sr, backtrack=False)
+            onset_indices.append(chunk_onsets + current_frame_offset)
+            
+            # Aggregate data for later global backtracking
+            oenv_chunks.append(oenv_chunk)
             S = np.abs(librosa.stft(y=chunk))
             rms_chunks.append(librosa.feature.rms(S=S)[0])
-        
-        print("made it here")
+            
+            current_frame_offset += len(oenv_chunk)
+            
         self.oenv = np.concatenate(oenv_chunks)
         self.rms = np.concatenate(rms_chunks)
         self.times = librosa.times_like(self.oenv, sr=sr)
-        print("now here")
         
-        # Now detect onsets on the full aggregated envelope
-        onset_raw = librosa.onset.onset_detect(onset_envelope=self.oenv, sr=sr, backtrack=False)
+        onset_raw = np.concatenate(onset_indices) if onset_indices else np.array([])
         
-        print("now hereeee")
         if len(onset_raw) == 0:
             return None, None, None
-        
-        print("finally here")
-        # Backtrack on the full sequences
+            
+        # Backtrack on the full, reconstructed sequences
         onset_bt = librosa.onset.onset_backtrack(onset_raw, self.oenv)
         onset_bt_rms = librosa.onset.onset_backtrack(onset_raw, self.rms)
         
