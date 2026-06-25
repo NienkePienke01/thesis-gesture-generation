@@ -26,7 +26,7 @@ class Alignment(object):
         self.order = order
         self.times = self.oenv = self.S = self.rms = None
 
-    def load_audio(self, wave, t_start=None, t_end=None, without_file=False, sr_audio=16000):
+    def load_audio(self, wave, t_start=None, t_end=None, without_file=False, sr_audio=16000, chunk_size=300):
         print("heree")
         if without_file:
             print("loading audio")
@@ -35,19 +35,32 @@ class Alignment(object):
         else:
             y, sr = librosa.load(wave, sr=sr_audio)
         
-        print("we are here")
-        self.oenv = librosa.onset.onset_strength(y=y, sr=sr)
+        sr = sr_audio
+        samples_per_chunk = chunk_size * sr
+        
+        oenv_chunks = []
+        rms_chunks = []
+        
+        # Process in chunks to extract envelope and RMS
+        for i in range(0, len(y), samples_per_chunk):
+            chunk = y[i : i + samples_per_chunk]
+            oenv_chunks.append(librosa.onset.onset_strength(y=chunk, sr=sr))
+            S = np.abs(librosa.stft(y=chunk))
+            rms_chunks.append(librosa.feature.rms(S=S)[0])
+            
+        self.oenv = np.concatenate(oenv_chunks)
+        self.rms = np.concatenate(rms_chunks)
         self.times = librosa.times_like(self.oenv, sr=sr)
         
-        onset_raw = librosa.onset.onset_detect(onset_envelope=self.oenv, backtrack=False)
+        # Now detect onsets on the full aggregated envelope
+        onset_raw = librosa.onset.onset_detect(onset_envelope=self.oenv, sr=sr, backtrack=False)
+        
         if len(onset_raw) == 0:
             return None, None, None
-        
-        print("we made it here")
+            
+        # Backtrack on the full sequences
         onset_bt = librosa.onset.onset_backtrack(onset_raw, self.oenv)
-        self.S = np.abs(librosa.stft(y=y))
-        self.rms = librosa.feature.rms(S=self.S)
-        onset_bt_rms = librosa.onset.onset_backtrack(onset_raw, self.rms[0])
+        onset_bt_rms = librosa.onset.onset_backtrack(onset_raw, self.rms)
         
         return onset_raw, onset_bt, onset_bt_rms
 
