@@ -287,6 +287,9 @@ class GenericLoader:
             with torch.no_grad():
                 output = self.body_model(**current_batch)
                 all_verts.append(output.vertices.detach().cpu().numpy())
+        
+        if not all_verts:
+            return np.zeros((self.num_frames, 0, 3))
 
         return np.concatenate(all_verts, axis=0)
 
