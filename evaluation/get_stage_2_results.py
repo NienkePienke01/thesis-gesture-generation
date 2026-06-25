@@ -124,7 +124,7 @@ def run_batch_inference(args):
         
         # Get the predicted 6d output values
         pred_6d, gt_6d, raw_audio = reconstruct_and_render_for_eval(
-                str(file_path), device, args.top_k, args.top_p, args.temperature, args.warm_start
+                str(file_path), device, args.top_k, args.top_p, args.temperature, args.warm_start, args.batch_size
             )
         if pred_6d is not None:
             all_pred.append(pred_6d)
@@ -158,6 +158,7 @@ if __name__ == "__main__":
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--top_k", type=int, default=50)
+    parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--top_p", type=float, default=0.90)
     parser.add_argument("--warm_start", action="store_true")
     
