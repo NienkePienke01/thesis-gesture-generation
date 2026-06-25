@@ -22,7 +22,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 os.environ['PYOPENGL_PLATFORM'] = 'egl'
 os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 
-def reconstruct_and_render_for_eval(target_npz_file, device, top_k, top_p, temperature, warm_start):
+def reconstruct_and_render_for_eval(target_npz_file, device, top_k, top_p, temperature, warm_start, batch_size):
     setup_data = setup_reconstruction(target_npz_file, device)
     if isinstance(setup_data, tuple) and len(setup_data) == 2: # for if the model is not loaded
         return setup_data
@@ -32,7 +32,6 @@ def reconstruct_and_render_for_eval(target_npz_file, device, top_k, top_p, tempe
     chunk_frames =  _stage2_runtime_cache["segmenter"].pose_length
     num_frames = segment_data.aligned_pose.shape[0]
     num_chunks = math.floor((num_frames - chunk_frames) / stride) + 1
-    batch_size = 1
 
     # Do inference on stage 2
     pose_codes = generate_motion_sequence(
