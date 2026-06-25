@@ -31,7 +31,9 @@ class Alignment(object):
             y = wave
             sr = sr_audio
         else:
+            print("Attempting to load audio...")
             y, sr = librosa.load(wave, sr=sr_audio)
+            print("Audio loaded successfully.")
             
         self.oenv = librosa.onset.onset_strength(y=y, sr=sr)
         self.times = librosa.times_like(self.oenv, sr=sr)
