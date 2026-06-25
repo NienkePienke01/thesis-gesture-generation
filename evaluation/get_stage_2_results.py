@@ -109,7 +109,7 @@ def run_batch_inference(args):
     setup_cache = []
     print(f"Loading segment data with {args.workers} background workers...")
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as executor:
-        future_to_id = {executor.submit(setup_reconstruction, str(dataset.samples.get(fid)), device): fid for fid in dataset.file_ids if dataset.samples.get(fid)}
+        future_to_id = {executor.submit(setup_reconstruction, str(dataset.samples.get(fid)), device, False): fid for fid in dataset.file_ids if dataset.samples.get(fid)}
         for future in tqdm(concurrent.futures.as_completed(future_to_id), total=len(future_to_id), desc="Extracting Audio & Context"):
             fid = future_to_id[future]
             try:

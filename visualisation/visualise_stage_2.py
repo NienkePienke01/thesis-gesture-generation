@@ -89,7 +89,7 @@ def load_stage2_and_stage1_pipeline(stage2_config_path, stage2_checkpoint_path, 
     except Exception as e:
         return f"Status: Framework loading failure - {str(e)}"
 
-def setup_reconstruction(target_npz_path, device):
+def setup_reconstruction(target_npz_path, device, load_vertices=True):
     if _stage2_runtime_cache["stage1_model"] is None or _stage2_runtime_cache["stage2_model"] is None or _stage2_runtime_cache["segmenter"] is None:
         return None, "Status: Please load the model(s) and segmenter first."
 
@@ -97,7 +97,7 @@ def setup_reconstruction(target_npz_path, device):
 
     original_loader = utils.SeamlessSMPLHLoader(target_npz_path, device=device)
     # Initialize asset dataset and loaders
-    original_loader = utils.SeamlessSMPLHLoader(target_npz_path, device=device, with_meta_data=True, load_vertices=True)
+    original_loader = utils.SeamlessSMPLHLoader(target_npz_path, device=device, with_meta_data=True, load_vertices=load_vertices)
     partner_loader = None
     if original_loader.meta_data and original_loader.meta_data.partner_full_id:
         search_root = Path(target_npz_path).parents[2]
