@@ -29,6 +29,9 @@ def reconstruct_and_render_for_eval(target_npz_file, device, top_k, top_p, tempe
         return setup_data
 
     original_loader, segment_data, partner_segment_data, relationship = setup_data
+    if original_loader.num_frames <= 0:
+        return None, None, None
+
     stride = _stage2_runtime_cache["stage1_model"].downsample_factor
     chunk_frames =  _stage2_runtime_cache["segmenter"].pose_length
     num_frames = segment_data.aligned_pose.shape[0]
@@ -131,6 +134,8 @@ def run_batch_inference(args):
             all_pred.append(pred_6d)
             all_gt.append(gt_6d)
             all_audio.append(raw_audio)
+        else:
+            print(f"Warning: {file_id} has no pred_6 data, skipping.")
 
     # Save flat arrays for eval.py
     if all_pred:
