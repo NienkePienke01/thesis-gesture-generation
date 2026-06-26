@@ -48,14 +48,21 @@ class Alignment(object):
         end_idx = int(t_end * sr) if t_end else len(y)
         short_y = y[int(t_start * sr):end_idx] 
         
+        print("running onset_strength")
         self.oenv = librosa.onset.onset_strength(y=short_y, sr=sr)
+        print("running times_like")
         self.times = librosa.times_like(self.oenv)
+        print("running onset_detect")
         onset_raw = librosa.onset.onset_detect(onset_envelope=self.oenv, backtrack=False)
         if len(onset_raw) == 0:
             return None, None, None
+        print("running onset_backtrack")
         onset_bt = librosa.onset.onset_backtrack(onset_raw, self.oenv)
+        print("running stft")
         self.S = np.abs(librosa.stft(y=short_y))
+        print("running rms")
         self.rms = librosa.feature.rms(S=self.S)
+        print("running onset_backtrack")
         onset_bt_rms = librosa.onset.onset_backtrack(onset_raw, self.rms[0])
         return onset_raw, onset_bt, onset_bt_rms
 
