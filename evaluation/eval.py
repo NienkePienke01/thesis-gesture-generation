@@ -17,8 +17,8 @@ import torch
 import numpy as np
 from data_processing.utils import get_smplh_model
 from utils import rotation_conversions as rc
-import gc
-import time
+import matplotlib.pyplot as plt
+from matplotlib.pyplot import figure
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -29,27 +29,27 @@ R_SHOULDER, R_ELBOW, R_WRIST = 17, 19, 21
 
 class Alignment(object):
     """Class to calculate alignment between audio and pose data"""
+
     def __init__(self, sigma, order):
         self.sigma = sigma
         self.order = order
         self.times = self.oenv = self.S = self.rms = None
+        self.pose_data = []
 
-    def load_audio(self, wave, t_start=None, t_end=None, without_file=False, sr_audio=16000):
-        print("[1/3] Formatting audio array...")
+    def load_audio(self, wave, t_start=0, t_end=None, without_file=False, sr_audio=16000):
         if without_file:
-            y, sr = wave, sr_audio
+            y = wave
+            sr = sr_audio
         else:
             y, sr = librosa.load(wave, sr=sr_audio)
-
-        short_y = y  # [int(t_start*sr):int(t_end*sr)]
+            
+        end_idx = int(t_end * sr) if t_end else len(y)
+        short_y = y[int(t_start * sr):end_idx] 
+        
         self.oenv = librosa.onset.onset_strength(y=short_y, sr=sr)
         self.times = librosa.times_like(self.oenv)
-        # Detect events without backtracking
-        onset_raw = librosa.onset.onset_detect(
-            onset_envelope=self.oenv, backtrack=False
-        )
+        onset_raw = librosa.onset.onset_detect(onset_envelope=self.oenv, backtrack=False)
         if len(onset_raw) == 0:
-            # print(len(wave))
             return None, None, None
         onset_bt = librosa.onset.onset_backtrack(onset_raw, self.oenv)
         self.S = np.abs(librosa.stft(y=short_y))
@@ -57,9 +57,67 @@ class Alignment(object):
         onset_bt_rms = librosa.onset.onset_backtrack(onset_raw, self.rms[0])
         return onset_raw, onset_bt, onset_bt_rms
 
+    def load_pose(self, pose, t_start, t_end, pose_fps):
+        start_idx = int(t_start * pose_fps)
+        end_idx = int(t_end * pose_fps) if t_end else len(pose)
+        data_each_file = pose[start_idx:end_idx]  
+        vel = data_each_file[1:, :] - data_each_file[:-1, :]
+        
+        vel_right_shoulder = np.linalg.norm(np.array([vel[:, 9 * 3], vel[:, 9 * 3 + 1], vel[:, 9 * 3 + 2]]), axis=0)
+        vel_right_arm = np.linalg.norm(np.array([vel[:, 10 * 3], vel[:, 10 * 3 + 1], vel[:, 10 * 3 + 2]]), axis=0)
+        vel_right_wrist = np.linalg.norm(np.array([vel[:, 11 * 3], vel[:, 11 * 3 + 1], vel[:, 11 * 3 + 2]]), axis=0)
+        beat_right_arm = argrelextrema(vel_right_arm, np.less, order=self.order)
+        beat_right_shoulder = argrelextrema(vel_right_shoulder, np.less, order=self.order)
+        beat_right_wrist = argrelextrema(vel_right_wrist, np.less, order=self.order)
+        
+        vel_left_shoulder = np.linalg.norm(np.array([vel[:, 5 * 3], vel[:, 5 * 3 + 1], vel[:, 5 * 3 + 2]]), axis=0)
+        vel_left_arm = np.linalg.norm(np.array([vel[:, 6 * 3], vel[:, 6 * 3 + 1], vel[:, 6 * 3 + 2]]), axis=0)
+        vel_left_wrist = np.linalg.norm(np.array([vel[:, 7 * 3], vel[:, 7 * 3 + 1], vel[:, 7 * 3 + 2]]), axis=0)
+        beat_left_arm = argrelextrema(vel_left_arm, np.less, order=self.order)
+        beat_left_shoulder = argrelextrema(vel_left_shoulder, np.less, order=self.order)
+        beat_left_wrist = argrelextrema(vel_left_wrist, np.less, order=self.order)
+        
+        return (beat_right_arm, beat_right_shoulder, beat_right_wrist,
+                beat_left_arm, beat_left_shoulder, beat_left_wrist)
+
+    def load_data(self, wave, pose, t_start, t_end, pose_fps):
+        onset_raw, onset_bt, onset_bt_rms = self.load_audio(wave, t_start, t_end)
+        pose_beats = self.load_pose(pose, t_start, t_end, pose_fps)
+        return onset_raw, onset_bt, onset_bt_rms, *pose_beats
+
+    def eval_random_pose(self, wave, pose, t_start, t_end, pose_fps, num_random=60):
+        onset_raw, onset_bt, onset_bt_rms = self.load_audio(wave, t_start, t_end)
+        dur = t_end - t_start
+        for i in range(num_random):
+            beats = self.load_pose(pose, i, i + dur, pose_fps)
+            beat_right_wrist = beats[2]
+            dis_all_b2a = self.calculate_align(onset_bt_rms, beat_right_wrist, pose_fps)
+            print(f"{i}s: ", dis_all_b2a)
+
+    def audio_beat_vis(self, onset_raw, onset_bt, onset_bt_rms):
+        figure(figsize=(24, 6), dpi=80)
+        fig, ax = plt.subplots(nrows=4, sharex=True)
+        librosa.display.specshow(librosa.amplitude_to_db(self.S, ref=np.max), y_axis="log", x_axis="time", ax=ax[0])
+        ax[0].label_outer()
+        ax[1].plot(self.times, self.oenv, label="Onset strength")
+        ax[1].vlines(librosa.frames_to_time(onset_raw), 0, self.oenv.max(), label="Raw onsets", color="r")
+        ax[1].legend()
+        ax[1].label_outer()
+
+        ax[2].plot(self.times, self.oenv, label="Onset strength")
+        ax[2].vlines(librosa.frames_to_time(onset_bt), 0, self.oenv.max(), label="Backtracked", color="r")
+        ax[2].legend()
+        ax[2].label_outer()
+
+        ax[3].plot(self.times, self.rms[0], label="RMS")
+        ax[3].vlines(librosa.frames_to_time(onset_bt_rms), 0, self.oenv.max(), label="Backtracked (RMS)", color="r")
+        ax[3].legend()
+        fig.savefig("./onset.png", dpi=500)
+
     @staticmethod
     def motion_frames2time(vel, offset, pose_fps):
-        return vel[0] / pose_fps + offset
+        time_vel = vel[0] / pose_fps + offset
+        return time_vel
 
     @staticmethod
     def GAHR(a, b, sigma):
@@ -71,14 +129,15 @@ class Alignment(object):
                 if l2_dis < l2_min:
                     l2_min = l2_dis
             dis_all_b2a += math.exp(-(l2_min**2) / (2 * sigma**2))
-        return dis_all_b2a / len(b) if len(b) > 0 else 0
+        dis_all_b2a /= len(b)
+        return dis_all_b2a
 
-    def calculate_align(self, onset_raw, onset_bt, onset_bt_rms, beat_right_arm, 
-                        beat_right_shoulder, beat_right_wrist, beat_left_arm, 
-                        beat_left_shoulder, beat_left_wrist, pose_fps=30, sr_audio=16000):
-        audio_bt = librosa.frames_to_time(onset_bt_rms, sr=sr_audio)
+    def calculate_align(self, onset_bt_rms, beat_right_wrist, pose_fps=25):
+        audio_bt = librosa.frames_to_time(onset_bt_rms)
         pose_bt = self.motion_frames2time(beat_right_wrist, 0, pose_fps)
-        return self.GAHR(pose_bt, audio_bt, self.sigma)
+        avg_dis_all_b2a = self.GAHR(pose_bt, audio_bt, self.sigma)
+        return avg_dis_all_b2a
+
 
 
 def calculate_diversity(activation: np.ndarray, diversity_times: int = 10_000) -> float:
@@ -169,7 +228,7 @@ def main(args):
     
     pose_fps = 30
     audio_sr = 16000
-    chunk_seconds = 60 
+    chunk_seconds = 600 
     
     pose_chunk_size = chunk_seconds * pose_fps
     
@@ -198,11 +257,12 @@ def main(args):
         onset_raw, onset_bt, onset_bt_rms = align.load_audio(wave=audio_chunk, without_file=True, sr_audio=audio_sr)
         
         if onset_raw is not None:
-            beats = align.load_pose(pose=pred_chunk, pose_fps=pose_fps, without_file=True)
-            chunk_ba = align.calculate_align(onset_raw, onset_bt, onset_bt_rms, *beats, pose_fps=pose_fps, sr_audio=audio_sr)
+            beats = align.load_pose(pose=pred_chunk, t_start=0, t_end=None, pose_fps=pose_fps)
+            beat_right_wrist = beats[2] 
+            chunk_ba = align.calculate_align(onset_bt_rms, beat_right_wrist, pose_fps=pose_fps)
             ba_scores.append(chunk_ba)
             
-        # Convert 6D to 3D and store for global metrics later
+        # Convert 6D to 3D
         all_pred_3d.append(convert_6d_to_3d(pred_chunk))
         all_gt_3d.append(convert_6d_to_3d(gt_chunk))
         
@@ -259,7 +319,7 @@ def main(args):
 
     metrics = {
         "project_name": project_name,
-        "ba_score": float(ba_score) if 'ba_score' in locals() else None,
+        "ba_score": float(final_ba_score) if 'ba_score' in locals() else None,
         "static_diversity": float(var_g.mean()),
         "kinematic_diversity": float(var_k.mean()), 
         "static_fgd": float(fid_g),
