@@ -252,6 +252,16 @@ def main(args):
         pred_chunk = pred_data[pose_start:pose_end]
         gt_chunk = gt_data[pose_start:pose_end]
         audio_chunk = audio_data[audio_start:audio_end]
+
+        # --- DATA INTEGRITY CHECK ---
+        if np.isnan(audio_chunk).any() or np.isinf(audio_chunk).any():
+            print(f"CRITICAL ERROR: NaN or Inf detected in audio chunk {pose_start//pose_chunk_size + 1}. Skipping...")
+            continue
+            
+        if np.max(np.abs(audio_chunk)) < 1e-6:
+            print(f"CRITICAL ERROR: Audio chunk {pose_start//pose_chunk_size + 1} is dead silence. Skipping...")
+            continue
+        # ----------------------------
         
         align = Alignment(sigma=3, order=4)
         onset_raw, onset_bt, onset_bt_rms = align.load_audio(wave=audio_chunk, without_file=True, sr_audio=audio_sr)
