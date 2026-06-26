@@ -41,58 +41,20 @@ class Alignment(object):
         else:
             y, sr = librosa.load(wave, sr=sr_audio)
 
-        chunk_samples = 5 * 60 * sr 
-        total_chunks = int(np.ceil(len(y) / chunk_samples))
-        
-        S_list, rms_list, oenv_list = [], [], []
-        onset_raw_list, onset_bt_list, onset_bt_rms_list = [], [], []
-        frame_offset = 0
-
-        print(f"[2/3] Processing {total_chunks} chunks through original librosa pipeline...")
-        for i in range(total_chunks):
-            start_time = time.time()
-            start_idx = i * chunk_samples
-            end_idx = min((i + 1) * chunk_samples, len(y))
-            y_chunk = y[start_idx:end_idx]
-            
-            # Exact original calculations
-            oenv_chunk = librosa.onset.onset_strength(y=y_chunk, sr=sr)
-            S_chunk = np.abs(librosa.stft(y=y_chunk))
-            rms_chunk = librosa.feature.rms(S=S_chunk)
-            
-            onset_raw_chunk = librosa.onset.onset_detect(onset_envelope=oenv_chunk, backtrack=False)
-            
-            # Backtrack and apply the global frame offset
-            if len(onset_raw_chunk) > 0:
-                onset_bt_chunk = librosa.onset.onset_backtrack(onset_raw_chunk, oenv_chunk)
-                onset_bt_rms_chunk = librosa.onset.onset_backtrack(onset_raw_chunk, rms_chunk[0])
-                
-                onset_raw_list.append(onset_raw_chunk + frame_offset)
-                onset_bt_list.append(onset_bt_chunk + frame_offset)
-                onset_bt_rms_list.append(onset_bt_rms_chunk + frame_offset)
-            
-            S_list.append(S_chunk)
-            rms_list.append(rms_chunk)
-            oenv_list.append(oenv_chunk)
-            
-            frame_offset += len(oenv_chunk)
-            del y_chunk
-            gc.collect()
-            print(f"      -> Chunk {i+1:02d}/{total_chunks} completed in {time.time() - start_time:.2f}s")
-
-        print("[3/3] Stitching arrays to finalize alignment object...")
-        self.S = np.concatenate(S_list, axis=1)
-        self.rms = np.concatenate(rms_list, axis=1)
-        self.oenv = np.concatenate(oenv_list, axis=0)
-        self.times = librosa.times_like(self.oenv, sr=sr)
-        
-        if not onset_raw_list:
+        short_y = y  # [int(t_start*sr):int(t_end*sr)]
+        self.oenv = librosa.onset.onset_strength(y=short_y, sr=sr)
+        self.times = librosa.times_like(self.oenv)
+        # Detect events without backtracking
+        onset_raw = librosa.onset.onset_detect(
+            onset_envelope=self.oenv, backtrack=False
+        )
+        if len(onset_raw) == 0:
+            # print(len(wave))
             return None, None, None
-            
-        onset_raw = np.concatenate(onset_raw_list)
-        onset_bt = np.concatenate(onset_bt_list)
-        onset_bt_rms = np.concatenate(onset_bt_rms_list)
-        
+        onset_bt = librosa.onset.onset_backtrack(onset_raw, self.oenv)
+        self.S = np.abs(librosa.stft(y=short_y))
+        self.rms = librosa.feature.rms(S=self.S)
+        onset_bt_rms = librosa.onset.onset_backtrack(onset_raw, self.rms[0])
         return onset_raw, onset_bt, onset_bt_rms
 
     @staticmethod
@@ -203,28 +165,60 @@ def main(args):
     
     pred_data = results["motion"] # 6D Rotations
     gt_data = results["gt"]       # 6D Rotations
-    audio_data = results["audio"]
+    audio_data = np.array(results["audio"]).flatten().astype(np.float32)
     
+    pose_fps = 30
+    audio_sr = 16000
+    chunk_seconds = 60 
+    
+    pose_chunk_size = chunk_seconds * pose_fps
+    
+    total_pose_frames = pred_data.shape[0]
+    
+    # Storage for aggregated metrics
+    ba_scores = []
+    all_pred_3d = []
+    all_gt_3d = []
+
     print("="*40)
-    print("1. CALCULATING BEAT ALIGNMENT (6D Space)")
+    print("1. CALCULATING BEAT ALIGNMENT & 3D CONVERSION (Chunked)")
     print("="*40)
-    
-    align = Alignment(sigma=3, order=4)
-    onset_raw, onset_bt, onset_bt_rms = align.load_audio(wave=audio_data, without_file=True, sr_audio=16000)
-    
-    if onset_raw is None:
-        print("BA Score: No audio beats detected!")
-    else:
-        beats = align.load_pose(pose=pred_data, pose_fps=30, without_file=True)
-        ba_score = align.calculate_align(onset_raw, onset_bt, onset_bt_rms, *beats, pose_fps=30, sr_audio=16000)
-        print(f"Beat Alignment Score (BA): {ba_score:.4f}")
+
+    # Process audio in chunks
+    for pose_start in range(0, total_pose_frames, pose_chunk_size):
+        pose_end = min(pose_start + pose_chunk_size, total_pose_frames)
+        audio_start = int((pose_start / pose_fps) * audio_sr)
+        audio_end = int((pose_end / pose_fps) * audio_sr)
+
+        pred_chunk = pred_data[pose_start:pose_end]
+        gt_chunk = gt_data[pose_start:pose_end]
+        audio_chunk = audio_data[audio_start:audio_end]
+        
+        align = Alignment(sigma=3, order=4)
+        onset_raw, onset_bt, onset_bt_rms = align.load_audio(wave=audio_chunk, without_file=True, sr_audio=audio_sr)
+        
+        if onset_raw is not None:
+            beats = align.load_pose(pose=pred_chunk, pose_fps=pose_fps, without_file=True)
+            chunk_ba = align.calculate_align(onset_raw, onset_bt, onset_bt_rms, *beats, pose_fps=pose_fps, sr_audio=audio_sr)
+            ba_scores.append(chunk_ba)
+            
+        # Convert 6D to 3D and store for global metrics later
+        all_pred_3d.append(convert_6d_to_3d(pred_chunk))
+        all_gt_3d.append(convert_6d_to_3d(gt_chunk))
+        
+        print(f"Processed chunk {pose_start//pose_chunk_size + 1}...")
+
+    # Finalize BA Score
+    final_ba_score = np.mean(ba_scores) if ba_scores else 0.0
+    print(f"Final Average Beat Alignment Score (BA): {final_ba_score:.4f}")
 
     print("\n" + "="*40)
-    print("2. CALCULATING FGD & DIVERSITY (3D Joint Space)")
+    print("2. CALCULATING GLOBAL FGD & DIVERSITY (3D Joint Space)")
     print("="*40)
     
-    pred_3d = convert_6d_to_3d(pred_data)
-    gt_3d = convert_6d_to_3d(gt_data)
+    # Concatenate all 3D chunks into single massive arrays for statistical math
+    pred_3d = np.concatenate(all_pred_3d, axis=0)
+    gt_3d = np.concatenate(all_gt_3d, axis=0)
     
     feature_dim = pred_3d.shape[-1]
 
@@ -250,7 +244,6 @@ def main(args):
     gt_motion_last = gt_motion.reshape(-1, feature_dim)
     
     # Kinematic Diversity 
-    # (Matches Audio2Photoreal reference: var across time/frames)
     var_k = np.var(pred_3d, axis=0) 
     print(f"Kinematic Diversity (var_k): {var_k.mean():.4f}")
 
