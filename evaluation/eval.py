@@ -43,21 +43,14 @@ class Alignment(object):
         end_idx = int(t_end * sr) if t_end else len(y)
         short_y = y[int(t_start * sr):end_idx] 
         
-        print("running onset_strength")
         self.oenv = librosa.onset.onset_strength(y=short_y, sr=sr)
-        print("running times_like")
         self.times = librosa.times_like(self.oenv)
-        print("running onset_detect")
         onset_raw = librosa.onset.onset_detect(onset_envelope=self.oenv, backtrack=False)
         if len(onset_raw) == 0:
             return None, None, None
-        print("running onset_backtrack")
         onset_bt = librosa.onset.onset_backtrack(onset_raw, self.oenv)
-        print("running stft")
         self.S = np.abs(librosa.stft(y=short_y))
-        print("running rms")
         self.rms = librosa.feature.rms(S=self.S)
-        print("running onset_backtrack")
         onset_bt_rms = librosa.onset.onset_backtrack(onset_raw, self.rms[0])
         return onset_raw, onset_bt, onset_bt_rms
 
@@ -257,16 +250,12 @@ def main(args):
         gt_chunk = gt_data[pose_start:pose_end]
         audio_chunk = audio_data[audio_start:audio_end]
         
-        print("creating alignment")
         align = Alignment(sigma=3, order=4)
-        print("loading audio")
         onset_raw, onset_bt, onset_bt_rms = align.load_audio(wave=audio_chunk, without_file=True, sr_audio=audio_sr)
         
         if onset_raw is not None:
-            print("loading pose for beat alignment")
             beats = align.load_pose(pose=pred_chunk, t_start=0, t_end=None, pose_fps=pose_fps)
             beat_right_wrist = beats[2] 
-            print("calculating alignment")
             chunk_ba = align.calculate_align(onset_bt_rms, beat_right_wrist, pose_fps=pose_fps)
             ba_scores.append(chunk_ba)
             
