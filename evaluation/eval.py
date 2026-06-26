@@ -7,6 +7,8 @@ os.environ["NUMBA_NUM_THREADS"] = "1"
 os.environ["NUMBA_THREADING_LAYER"] = "workqueue"
 
 import librosa
+from evaluation.utils import peak_pick
+librosa.util.peak_pick = peak_pick
 import argparse
 from scipy.signal import argrelextrema
 import math
