@@ -16,6 +16,7 @@ from data_processing.utils import get_smplh_model
 from utils import rotation_conversions as rc
 import matplotlib.pyplot as plt
 from matplotlib.pyplot import figure
+from tqdm import tqdm
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -145,8 +146,11 @@ def calculate_diversity(activation: np.ndarray, diversity_times: int = 10_000) -
     num_samples = activation.shape[0]
     first_indices = np.random.choice(num_samples, diversity_times, replace=False)
     second_indices = np.random.choice(num_samples, diversity_times, replace=False)
-    dist = linalg.norm(activation[first_indices] - activation[second_indices], axis=1)
-    return dist
+    
+    # Mean Squared Error (MSE) instead of Euclidean Norm (Dyadit mentions this)
+    squared_diff = (activation[first_indices] - activation[second_indices]) ** 2
+    mse = np.mean(squared_diff, axis=1) 
+    return mse
 
 def calculate_activation_statistics(activations: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     mu = np.mean(activations, axis=0)
@@ -241,7 +245,7 @@ def main(args):
     print("="*40)
 
     # Process audio in chunks
-    for pose_start in range(0, total_pose_frames, pose_chunk_size):
+    for pose_start in tqdm(range(0, total_pose_frames, pose_chunk_size), desc="Processing Chunks"):
         pose_end = min(pose_start + pose_chunk_size, total_pose_frames)
         audio_start = int((pose_start / pose_fps) * audio_sr)
         audio_end = int((pose_end / pose_fps) * audio_sr)
@@ -262,8 +266,6 @@ def main(args):
         # Convert 6D to 3D
         all_pred_3d.append(convert_6d_to_3d(pred_chunk))
         all_gt_3d.append(convert_6d_to_3d(gt_chunk))
-        
-        print(f"Processed chunk {pose_start//pose_chunk_size + 1}...")
 
     # Finalize BA Score
     final_ba_score = np.mean(ba_scores) if ba_scores else 0.0
@@ -274,8 +276,8 @@ def main(args):
     print("="*40)
     
     # Concatenate all 3D chunks into single massive arrays for statistical math
-    pred_3d = np.concatenate(all_pred_3d, axis=0)
-    gt_3d = np.concatenate(all_gt_3d, axis=0)
+    pred_3d = np.concatenate(all_pred_3d, axis=0) * 100.0 # Scale coordinates from meters to centimeters to match dyadit benchmark
+    gt_3d = np.concatenate(all_gt_3d, axis=0) * 100.0
     
     feature_dim = pred_3d.shape[-1]
 
@@ -300,8 +302,8 @@ def main(args):
     pred_motion_last = pred_motion.reshape(-1, feature_dim)
     gt_motion_last = gt_motion.reshape(-1, feature_dim)
     
-    # Kinematic Diversity 
-    var_k = np.var(pred_3d, axis=0) 
+    # Calculate diversity on the velocity (kinematic)
+    var_k = calculate_diversity(pred_motion_last) 
     print(f"Kinematic Diversity (var_k): {var_k.mean():.4f}")
 
     # Kinematic FGD
