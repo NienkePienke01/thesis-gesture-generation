@@ -1,11 +1,4 @@
 import os
-os.environ["OMP_NUM_THREADS"] = "1"
-os.environ["MKL_NUM_THREADS"] = "1"
-os.environ["OPENBLAS_NUM_THREADS"] = "1"
-os.environ["NUMEXPR_NUM_THREADS"] = "1"
-os.environ["NUMBA_NUM_THREADS"] = "1"
-os.environ["NUMBA_THREADING_LAYER"] = "workqueue"
-
 import librosa
 from evaluation.utils import peak_pick
 librosa.util.peak_pick = peak_pick
@@ -239,7 +232,7 @@ def main(args):
     
     pose_fps = 30
     audio_sr = 16000
-    chunk_seconds = 600 
+    chunk_seconds = 3600
     
     pose_chunk_size = chunk_seconds * pose_fps
     
