@@ -140,17 +140,12 @@ class Alignment(object):
 
 def calculate_diversity(activation: np.ndarray, diversity_times: int = 10_000) -> float:
     assert len(activation.shape) == 2
-    if activation.shape[0] <= diversity_times:
-        diversity_times = activation.shape[0] // 2 
-    
+    assert activation.shape[0] > diversity_times
     num_samples = activation.shape[0]
     first_indices = np.random.choice(num_samples, diversity_times, replace=False)
     second_indices = np.random.choice(num_samples, diversity_times, replace=False)
-    
-    # Mean Squared Error (MSE) instead of Euclidean Norm (Dyadit mentions this)
-    squared_diff = (activation[first_indices] - activation[second_indices]) ** 2
-    mse = np.mean(squared_diff, axis=1) 
-    return mse
+    dist = linalg.norm(activation[first_indices] - activation[second_indices], axis=1)
+    return dist
 
 def calculate_activation_statistics(activations: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     mu = np.mean(activations, axis=0)
@@ -197,7 +192,7 @@ def convert_6d_to_3d(pose_6d: np.ndarray, device='cuda') -> np.ndarray:
     smplh = get_smplh_model(device, gender='male')
     all_joints_3d = []
     
-    # Extract the 43 specific 3D joint positions (ignoring root and lower body)
+    # Extract the 43 specific 3D joint positions (ignore lower body)
     eval_indices = [idx + 1 for idx in keep_indices] + list(range(22, 52))
     
     with torch.no_grad():
@@ -210,7 +205,7 @@ def convert_6d_to_3d(pose_6d: np.ndarray, device='cuda') -> np.ndarray:
                 body_pose=full_body_pose[i:end].reshape(curr_batch_size, -1),
                 left_hand_pose=left_hand_pose[i:end].reshape(curr_batch_size, -1),
                 right_hand_pose=right_hand_pose[i:end].reshape(curr_batch_size, -1),
-                betas=smplh.betas.expand(curr_batch_size, -1),  # <-- The required fix
+                betas=smplh.betas.expand(curr_batch_size, -1),
                 return_verts=False
             )
             
