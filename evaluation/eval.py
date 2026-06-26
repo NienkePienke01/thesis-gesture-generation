@@ -251,24 +251,18 @@ def main(args):
 
         pred_chunk = pred_data[pose_start:pose_end]
         gt_chunk = gt_data[pose_start:pose_end]
-        audio_chunk = np.ascontiguousarray(audio_data[audio_start:audio_end])
-
-        # --- DATA INTEGRITY CHECK ---
-        if np.isnan(audio_chunk).any() or np.isinf(audio_chunk).any():
-            print(f"CRITICAL ERROR: NaN or Inf detected in audio chunk {pose_start//pose_chunk_size + 1}. Skipping...")
-            continue
-            
-        if np.max(np.abs(audio_chunk)) < 1e-6:
-            print(f"CRITICAL ERROR: Audio chunk {pose_start//pose_chunk_size + 1} is dead silence. Skipping...")
-            continue
-        # ----------------------------
+        audio_chunk = audio_data[audio_start:audio_end]
         
+        print("creating alignment")
         align = Alignment(sigma=3, order=4)
+        print("loading audio")
         onset_raw, onset_bt, onset_bt_rms = align.load_audio(wave=audio_chunk, without_file=True, sr_audio=audio_sr)
         
         if onset_raw is not None:
+            print("loading pose for beat alignment")
             beats = align.load_pose(pose=pred_chunk, t_start=0, t_end=None, pose_fps=pose_fps)
             beat_right_wrist = beats[2] 
+            print("calculating alignment")
             chunk_ba = align.calculate_align(onset_bt_rms, beat_right_wrist, pose_fps=pose_fps)
             ba_scores.append(chunk_ba)
             
