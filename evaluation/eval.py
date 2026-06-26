@@ -251,7 +251,7 @@ def main(args):
 
         pred_chunk = pred_data[pose_start:pose_end]
         gt_chunk = gt_data[pose_start:pose_end]
-        audio_chunk = audio_data[audio_start:audio_end]
+        audio_chunk = np.ascontiguousarray(audio_data[audio_start:audio_end])
 
         # --- DATA INTEGRITY CHECK ---
         if np.isnan(audio_chunk).any() or np.isinf(audio_chunk).any():
