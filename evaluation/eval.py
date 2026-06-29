@@ -272,7 +272,7 @@ def convert_6d_to_3d(pose_6d: np.ndarray, device='cuda') -> np.ndarray:
 
     body_mask = [0, 1, 3, 4, 6, 7, 9, 10]
     keep_indices = [i for i in range(21) if i not in body_mask]
-    eval_indices = [2, 5, 8, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20] + list(range(22, 52))
+    eval_indices = [3, 6, 9, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21] + list(range(22, 52))
     
     # Map the 13 reconstructed joints back to their original skeletal indices
     full_body_pose[:, keep_indices, :] = rec_body
@@ -303,57 +303,63 @@ def convert_6d_to_3d(pose_6d: np.ndarray, device='cuda') -> np.ndarray:
         
     return np.concatenate(all_joints_3d, axis=0).reshape(frames, -1)
 
-
 def calculate_gt_baselines(env):
-    all_gt_static, all_gt_kine = [], []
+    all_gt_static_stats, all_gt_kine_stats = [], []
+    all_gt_static_div, all_gt_kine_div = [], []
     
     print("\n" + "="*40)
-    print("0. CALCULATING GROUND TRUTH BASELINES (GLOBAL)")
+    print("0. CALCULATING GROUND TRUTH BASELINES")
     print("="*40)
     
-    # Gather all frames from all clips
+    # Gather all GT statistics and per-sequence diversities
     with env.begin() as txn:
         for key, value in tqdm(txn.cursor(), desc="Extracting GT Stats"):
             entry = pickle.loads(value)
             gt_3d = convert_6d_to_3d(entry["gt"])
             feature_dim = gt_3d.shape[-1]
             
-            all_gt_static.append(gt_3d.reshape(-1, feature_dim))
-            all_gt_kine.append((gt_3d[1:, :] - gt_3d[:-1, :]).reshape(-1, feature_dim))
+            gt_static = gt_3d.reshape(-1, feature_dim)
+            gt_kine = (gt_3d[1:, :] - gt_3d[:-1, :]).reshape(-1, feature_dim)
+            
+            all_gt_static_stats.append(calculate_activation_statistics(gt_static))
+            all_gt_kine_stats.append(calculate_activation_statistics(gt_kine))
+            
+            # Ensure diversity_times is strictly smaller than the number of frames
+            div_samples_g = min(10000, gt_static.shape[0] - 1)
+            div_samples_k = min(10000, gt_kine.shape[0] - 1)
+            
+            all_gt_static_div.append(calculate_diversity(gt_static, diversity_times=div_samples_g).mean())
+            all_gt_kine_div.append(calculate_diversity(gt_kine, diversity_times=div_samples_k).mean())
 
-    num_clips = len(all_gt_static)
+    num_clips = len(all_gt_static_stats)
     if num_clips < 2:
         return None
 
-    # Global Diversity 
-    global_gt_static = np.concatenate(all_gt_static, axis=0)
-    global_gt_kine = np.concatenate(all_gt_kine, axis=0)
-    
-    div_samples_g = min(10000, global_gt_static.shape[0])
-    div_samples_k = min(10000, global_gt_kine.shape[0])
-    
-    static_gt_div = float(calculate_diversity(global_gt_static, diversity_times=div_samples_g).mean())
-    kine_gt_div = float(calculate_diversity(global_gt_kine, diversity_times=div_samples_k).mean())
-
-    # GT Random FD (Split dataset into two random halves and pool)
+    # Create mismatched pairs for cross-sample FD
     indices = list(range(num_clips))
-    random.shuffle(indices)
-    mid = num_clips // 2
-    
-    half1_static = np.concatenate([all_gt_static[i] for i in indices[:mid]], axis=0)
-    half2_static = np.concatenate([all_gt_static[i] for i in indices[mid:]], axis=0)
-    
-    half1_kine = np.concatenate([all_gt_kine[i] for i in indices[:mid]], axis=0)
-    half2_kine = np.concatenate([all_gt_kine[i] for i in indices[mid:]], axis=0)
+    random_indices = indices.copy()
+    while True:
+        random.shuffle(random_indices)
+        if not any(i == j for i, j in zip(indices, random_indices)):
+            break
 
-    # Calculate global FD between the two random halves
-    mu1_g, cov1_g = calculate_activation_statistics(half1_static)
-    mu2_g, cov2_g = calculate_activation_statistics(half2_static)
-    static_gt_random_fd = calculate_frechet_distance(mu1_g, cov1_g, mu2_g, cov2_g)
-    
-    mu1_k, cov1_k = calculate_activation_statistics(half1_kine)
-    mu2_k, cov2_k = calculate_activation_statistics(half2_kine)
-    kine_gt_random_fd = calculate_frechet_distance(mu1_k, cov1_k, mu2_k, cov2_k)
+    # Calculate FD between the random pairs
+    gt_random_static_fd, gt_random_kine_fd = [], []
+    for i, j in zip(indices, random_indices):
+        # Static FD
+        mu1_g, cov1_g = all_gt_static_stats[i]
+        mu2_g, cov2_g = all_gt_static_stats[j]
+        gt_random_static_fd.append(calculate_frechet_distance(mu1_g, cov1_g, mu2_g, cov2_g)) # Scaled for readability
+        
+        # Kinematic FD
+        mu1_k, cov1_k = all_gt_kine_stats[i]
+        mu2_k, cov2_k = all_gt_kine_stats[j]
+        gt_random_kine_fd.append(calculate_frechet_distance(mu1_k, cov1_k, mu2_k, cov2_k))
+        
+    static_gt_div = float(np.mean(all_gt_static_div))
+    kine_gt_div = float(np.mean(all_gt_kine_div))
+    static_gt_random_fd = float(np.mean(gt_random_static_fd))
+    kine_gt_random_fd = float(np.mean(gt_random_kine_fd))
     
     print(f"GT Diversity (Static): {static_gt_div:.4f}")
     print(f"GT Random FD (Static): {static_gt_random_fd:.4f}")
