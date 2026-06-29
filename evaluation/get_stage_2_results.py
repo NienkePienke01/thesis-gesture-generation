@@ -5,6 +5,8 @@ import os
 import numpy as np
 import torch
 import torch.nn.functional as F
+import lmdb
+import pickle
 from pathlib import Path
 from types import SimpleNamespace
 from tqdm import tqdm
@@ -101,7 +103,7 @@ def reconstruct_and_render_for_eval(target_npz_file, device, top_k, top_p, tempe
 def run_batch_inference(args):
     device = torch.device(args.device)
     
-    # Load models into the imported global cache using your function
+    # Load models
     print("Initializing pipeline...")
     status = load_stage2_and_stage1_pipeline(
         args.stage2_config, 
@@ -116,11 +118,15 @@ def run_batch_inference(args):
     dataset = SeamlessDataset(args.test_folder)
     print(f"Found {len(dataset)} valid interaction files based on manifest.")
 
+    start_time = datetime.now().strftime("%Y%m%d_%H%M")
+    project_name = _stage2_runtime_cache.get('project_name', 'unknown')
+    output_dir = PROJECT_ROOT / "evaluation_results" / f"evaluation_{start_time}_clip_{args.clip_time}s-{project_name}"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    env = lmdb.open(str(output_dir), map_size=int(1024**3 * args.max_gb))
+    sample_idx = 0
+
     # Run Inference Loop
-    all_pred = []
-    all_gt = []
-    all_audio = []
-    
     for file_id in tqdm(dataset.file_ids, desc="Generating Gestures"):
         file_path = dataset.samples.get(file_id)
         if not file_path:
@@ -131,28 +137,25 @@ def run_batch_inference(args):
         pred_6d, gt_6d, raw_audio = reconstruct_and_render_for_eval(
                 str(file_path), device, args.top_k, args.top_p, args.temperature, args.warm_start, args.clip_time
             )
-        if pred_6d is not None:
-            all_pred.append(pred_6d)
-            all_gt.append(gt_6d)
-            all_audio.append(raw_audio)
-        else:
-            print(f"Warning: {file_id} has no pred_6 data, skipping.")
-
-    # Save flat arrays for eval.py
-    if all_pred:
-        stacked_pred = np.concatenate(all_pred, axis=0)
-        stacked_gt = np.concatenate(all_gt, axis=0)
-        stacked_audio = np.concatenate(all_audio, axis=0)
         
-        start_time = datetime.now().strftime("%Y%m%d_%H%M")
-        output_dir = PROJECT_ROOT / "evaluation_results"
-        output_dir.mkdir(parents=True, exist_ok=True)
+        if pred_6d is not None:
+            with env.begin(write=True) as transaction:
+                entry = {
+                    "motion": pred_6d,
+                    "gt": gt_6d,
+                    "audio": raw_audio,
+                    "clip_length_seconds": args.clip_time,
+                    "file_id": file_id
+                }
+                key = f"{sample_idx:08d}".encode("ascii")
+                transaction.put(key, pickle.dumps(entry))
+            sample_idx += 1
+        else:
+            print(f"Warning: {file_id} has no pred_6d data, skipping.")
 
-        # Save the file within that directory
-        output_file = output_dir / f"evaluation_{start_time}-{_stage2_runtime_cache['project_name']}.npy"
-        np.save(output_file, {"motion": stacked_pred, "gt": stacked_gt, "audio": stacked_audio})
-        print(f"Saved evaluation bundle (Shape: {stacked_pred.shape}) to {output_file}")
-
+    env.close()
+    if sample_idx > 0:
+        print(f"Successfully saved {sample_idx} sequences to LMDB at {output_dir}")
     else:
         print("No valid sequences were processed.")
 
@@ -168,5 +171,6 @@ if __name__ == "__main__":
     parser.add_argument("--top_p", type=float, default=0.90)
     parser.add_argument("--warm_start", action="store_true")
     parser.add_argument("--clip_time", type=int, default=30) # This is in seconds
+    parser.add_argument("--max_gb", type=int, default=2) # This is in seconds
     
     run_batch_inference(parser.parse_args())

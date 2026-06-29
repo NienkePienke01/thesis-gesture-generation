@@ -229,97 +229,99 @@ def convert_6d_to_3d(pose_6d: np.ndarray, device='cuda') -> np.ndarray:
         
     return np.concatenate(all_joints_3d, axis=0).reshape(frames, -1)
 
-
 def main(args):
-    results = np.load(args.results, allow_pickle=True).item()
+    import lmdb
+    import pickle
     
-    pred_data = results["motion"] # 6D Rotations
-    gt_data = results["gt"]       # 6D Rotations
-    audio_data = np.array(results["audio"]).flatten().astype(np.float32)
-    
+    env = lmdb.open(args.results, readonly=True)
     pose_fps = 30
     audio_sr = 16000
     
-    ba_score = 0.0
-
-    # Storage for aggregated metrics
     print("="*40)
-    print("1. CALCULATING BEAT ALIGNMENT & 3D CONVERSION")
+    print("1. EVALUATING CLIPS FROM LMDB (Per-Sequence)")
     print("="*40)
-        
+    
+    all_static_div, all_kinematic_div = [], []
+    all_static_fd, all_kinematic_fd = [], []
     # align = Alignment(sigma=3, order=4)
-    # onset_raw, onset_bt, onset_bt_rms = align.load_audio(wave=audio_data, without_file=True, sr_audio=audio_sr)
-        
-    # if onset_raw is not None:
-    #     beats = align.load_pose(pose=pred_data, t_start=0, t_end=None, pose_fps=pose_fps)
-    #     beat_right_wrist = beats[2] 
-    #     ba_score = align.calculate_align(onset_bt_rms, beat_right_wrist, pose_fps=pose_fps)
+    
+    with env.begin() as txn:
+        for key, value in tqdm(txn.cursor(), desc="Evaluating Clips"):
+            entry = pickle.loads(value)
+
+            # onset_raw, onset_bt, onset_bt_rms = align.load_audio(wave=audio_data, without_file=True, sr_audio=audio_sr)
+                
+            # if onset_raw is not None:
+            #     beats = align.load_pose(pose=pred_data, t_start=0, t_end=None, pose_fps=pose_fps)
+            #     beat_right_wrist = beats[2] 
+            #     ba_score = align.calculate_align(onset_bt_rms, beat_right_wrist, pose_fps=pose_fps)
             
-    # Convert 6D to 3D
-    pred_data = (convert_6d_to_3d(pred_data))
-    gt_data = (convert_6d_to_3d(gt_data))
+            # Convert 6D to 3D for this specific clip
+            pred_3d = convert_6d_to_3d(entry["motion"])
+            gt_3d = convert_6d_to_3d(entry["gt"])
+            
+            feature_dim = pred_3d.shape[-1]
+            
+            # Static Formatting
+            pred_static = pred_3d.reshape(-1, feature_dim)
+            gt_static = gt_3d.reshape(-1, feature_dim)
+            
+            # Kinematic Formatting (Velocity)
+            pred_kine = (pred_3d[1:, :] - pred_3d[:-1, :]).reshape(-1, feature_dim)
+            gt_kine = (gt_3d[1:, :] - gt_3d[:-1, :]).reshape(-1, feature_dim)
+            
+            # Ensure diversity_times is strictly smaller than the number of frames in the clip
+            div_samples_g = min(1000, pred_static.shape[0] - 1)
+            div_samples_k = min(1000, pred_kine.shape[0] - 1)
+            
+            # Per-sequence Diversity
+            all_static_div.append(calculate_diversity(pred_static, diversity_times=div_samples_g).mean())
+            all_kinematic_div.append(calculate_diversity(pred_kine, diversity_times=div_samples_k).mean())
+            
+            # Per-sequence FD
+            pred_mu_g, pred_cov_g = calculate_activation_statistics(pred_static)
+            gt_mu_g, gt_cov_g = calculate_activation_statistics(gt_static)
+            all_static_fd.append(calculate_frechet_distance(gt_mu_g, gt_cov_g, pred_mu_g, pred_cov_g) * 10.0) # Scaled for DyaDiT readability
+            
+            pred_mu_k, pred_cov_k = calculate_activation_statistics(pred_kine)
+            gt_mu_k, gt_cov_k = calculate_activation_statistics(gt_kine)
+            all_kinematic_fd.append(calculate_frechet_distance(gt_mu_k, gt_cov_k, pred_mu_k, pred_cov_k))
+            
+    env.close()
 
-    # Finalize BA Score
-    print(f"Final Average Beat Alignment Score (BA): {ba_score:.4f}")
-
+    # Average everything together
+    static_div = float(np.mean(all_static_div))
+    kinematic_div = float(np.mean(all_kinematic_div))
+    static_fd = float(np.mean(all_static_fd))
+    kinematic_fd = float(np.mean(all_kinematic_fd))
+    
     print("\n" + "="*40)
-    print("2. CALCULATING GLOBAL FD & DIVERSITY (3D Joint Space)")
+    print("2. FINAL EVALUATION METRICS (Averaged)")
     print("="*40)
     
-    pred_3d = pred_data
-    gt_3d = gt_data
+    print(f"Static Diversity (var_g): {static_div:.4f}")
+    print(f"Static FD (fid_g): {static_fd:.4f}")
+    print(f"Kinematic Diversity (var_k): {kinematic_div:.4f}")
+    print(f"Kinematic FD (fid_k): {kinematic_fd:.4f}")
     
-    feature_dim = pred_3d.shape[-1]
-
-    # Reshape for static calculations [Frames, Features]
-    pred_pose_last = pred_3d.reshape(-1, feature_dim)
-    gt_pose_last = gt_3d.reshape(-1, feature_dim)
-
-    # Static Diversity
-    var_g = calculate_diversity(pred_pose_last, diversity_times=1000)
-    print(f"Static Diversity (var_g): {var_g.mean():.4f}")
-    
-    # Static FD
-    pred_mu_g, pred_cov_g = calculate_activation_statistics(pred_pose_last)
-    gt_mu_g, gt_cov_g = calculate_activation_statistics(gt_pose_last)
-    fid_g = calculate_frechet_distance(gt_mu_g, gt_cov_g, pred_mu_g, pred_cov_g)
-    print(f"Static FD (fid_g): {fid_g:.4f}")
-    
-    # Kinematic processing (Velocity)
-    pred_motion = pred_3d[1:, :] - pred_3d[:-1, :]
-    gt_motion = gt_3d[1:, :] - gt_3d[:-1, :]
-    
-    pred_motion_last = pred_motion.reshape(-1, feature_dim)
-    gt_motion_last = gt_motion.reshape(-1, feature_dim)
-    
-    # Calculate diversity on the velocity (kinematic)
-    var_k = calculate_diversity(pred_motion_last, diversity_times=1000) 
-    print(f"Kinematic Diversity (var_k): {var_k.mean():.4f}")
-
-    # Kinematic FD
-    pred_mu_k, pred_cov_k = calculate_activation_statistics(pred_motion_last)
-    gt_mu_k, gt_cov_k = calculate_activation_statistics(gt_motion_last)
-    fid_k = calculate_frechet_distance(gt_mu_k, gt_cov_k, pred_mu_k, pred_cov_k)
-    print(f"Kinematic FD (fid_k): {fid_k:.4f}")
-
     # Save the metrics
     input_path = Path(args.results)
     project_name = input_path.stem.split('-')[1] if len(input_path.stem.split('-')) > 1 else "unknown"
 
     metrics = {
         "project_name": project_name,
-        "ba_score": float(ba_score) if 'ba_score' in locals() else None,
-        "static_diversity": float(var_g.mean()),
-        "kinematic_diversity": float(var_k.mean()), 
-        "static_FD": float(fid_g),
-        "kinematic_FD": float(fid_k)
+        "static_diversity": static_div,
+        "kinematic_diversity": kinematic_div, 
+        "static_FD": static_fd,
+        "kinematic_FD": kinematic_fd
     }
 
-    start_time = datetime.now().strftime("%Y%m%d_%H%M")
     output_dir = Path("evaluation_metrics_results")
     output_dir.mkdir(parents=True, exist_ok=True)
     
+    start_time = datetime.now().strftime("%Y%m%d_%H%M")
     output_file = output_dir / f"metrics_{project_name}_{start_time}.json"
+    
     with open(output_file, 'w') as f:
         json.dump(metrics, f, indent=4)
 
