@@ -120,7 +120,7 @@ def run_batch_inference(args):
 
     start_time = datetime.now().strftime("%Y%m%d_%H%M")
     project_name = _stage2_runtime_cache.get('project_name', 'unknown')
-    output_dir = PROJECT_ROOT / "evaluation_results" / f"evaluation_{start_time}_clip_{args.clip_time}s-{project_name}"
+    output_dir = PROJECT_ROOT / "evaluation_results" / f"evaluation_{start_time}_clip_{args.clip_time}s_warm_start_{args.warm_start}-{project_name}"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     env = lmdb.open(str(output_dir), map_size=int(1024**3 * args.max_gb))
@@ -145,7 +145,8 @@ def run_batch_inference(args):
                     "gt": gt_6d,
                     "audio": raw_audio,
                     "clip_length_seconds": args.clip_time,
-                    "file_id": file_id
+                    "file_id": file_id,
+                    "warm_start": args.warm_start
                 }
                 key = f"{sample_idx:08d}".encode("ascii")
                 transaction.put(key, pickle.dumps(entry))

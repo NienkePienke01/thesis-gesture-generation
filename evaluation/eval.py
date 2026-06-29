@@ -17,6 +17,8 @@ from utils import rotation_conversions as rc
 import matplotlib.pyplot as plt
 from matplotlib.pyplot import figure
 from tqdm import tqdm
+import lmdb
+import pickle
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -229,10 +231,65 @@ def convert_6d_to_3d(pose_6d: np.ndarray, device='cuda') -> np.ndarray:
         
     return np.concatenate(all_joints_3d, axis=0).reshape(frames, -1)
 
-def main(args):
-    import lmdb
-    import pickle
+import random
+
+def calculate_gt_random_baseline(env):
+    all_gt_static_stats = []
+    all_gt_kine_stats = []
     
+    print("\n" + "="*40)
+    print("3. CALCULATING 'GT RANDOM' BASELINE")
+    print("="*40)
+    
+    # Gather all GT statistics
+    with env.begin() as txn:
+        for key, value in tqdm(txn.cursor(), desc="Extracting GT Stats"):
+            entry = pickle.loads(value)
+            gt_3d = convert_6d_to_3d(entry["gt"])
+            feature_dim = gt_3d.shape[-1]
+            
+            gt_static = gt_3d.reshape(-1, feature_dim)
+            gt_kine = (gt_3d[1:, :] - gt_3d[:-1, :]).reshape(-1, feature_dim)
+            
+            all_gt_static_stats.append(calculate_activation_statistics(gt_static))
+            all_gt_kine_stats.append(calculate_activation_statistics(gt_kine))
+
+    num_clips = len(all_gt_static_stats)
+    if num_clips < 2:
+        return None, None
+
+    # Create mismatched pairs
+    indices = list(range(num_clips))
+    random_indices = indices.copy()
+    while True:
+        random.shuffle(random_indices)
+        if not any(i == j for i, j in zip(indices, random_indices)):
+            break
+
+    # Calculate FD between the random pairs
+    gt_random_static_fd = []
+    gt_random_kine_fd = []
+
+    for i, j in zip(indices, random_indices):
+        # Static FD
+        mu1_g, cov1_g = all_gt_static_stats[i]
+        mu2_g, cov2_g = all_gt_static_stats[j]
+        gt_random_static_fd.append(calculate_frechet_distance(mu1_g, cov1_g, mu2_g, cov2_g) * 10.0) # Scaled
+        
+        # Kinematic FD
+        mu1_k, cov1_k = all_gt_kine_stats[i]
+        mu2_k, cov2_k = all_gt_kine_stats[j]
+        gt_random_kine_fd.append(calculate_frechet_distance(mu1_k, cov1_k, mu2_k, cov2_k))
+        
+    static_gt_random = float(np.mean(gt_random_static_fd))
+    kine_gt_random = float(np.mean(gt_random_kine_fd))
+    
+    print(f"GT Random Static FD: {static_gt_random:.4f}")
+    print(f"GT Random Kinematic FD: {kine_gt_random:.4f}")
+    
+    return static_gt_random, kine_gt_random
+
+def main(args):
     env = lmdb.open(args.results, readonly=True)
     pose_fps = 30
     audio_sr = 16000
