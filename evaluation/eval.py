@@ -240,18 +240,20 @@ def main(args):
     pose_fps = 30
     audio_sr = 16000
     
+    ba_score = 0.0
+
     # Storage for aggregated metrics
     print("="*40)
-    print("1. CALCULATING BEAT ALIGNMENT & 3D CONVERSION (Chunked)")
+    print("1. CALCULATING BEAT ALIGNMENT & 3D CONVERSION")
     print("="*40)
         
-    align = Alignment(sigma=3, order=4)
-    onset_raw, onset_bt, onset_bt_rms = align.load_audio(wave=audio_data, without_file=True, sr_audio=audio_sr)
+    # align = Alignment(sigma=3, order=4)
+    # onset_raw, onset_bt, onset_bt_rms = align.load_audio(wave=audio_data, without_file=True, sr_audio=audio_sr)
         
-    if onset_raw is not None:
-        beats = align.load_pose(pose=pred_data, t_start=0, t_end=None, pose_fps=pose_fps)
-        beat_right_wrist = beats[2] 
-        ba_score = align.calculate_align(onset_bt_rms, beat_right_wrist, pose_fps=pose_fps)
+    # if onset_raw is not None:
+    #     beats = align.load_pose(pose=pred_data, t_start=0, t_end=None, pose_fps=pose_fps)
+    #     beat_right_wrist = beats[2] 
+    #     ba_score = align.calculate_align(onset_bt_rms, beat_right_wrist, pose_fps=pose_fps)
             
     # Convert 6D to 3D
     pred_data = (convert_6d_to_3d(pred_data))
@@ -264,7 +266,6 @@ def main(args):
     print("2. CALCULATING GLOBAL FD & DIVERSITY (3D Joint Space)")
     print("="*40)
     
-    # Concatenate all 3D chunks into single massive arrays for statistical math
     pred_3d = pred_data
     gt_3d = gt_data
     
