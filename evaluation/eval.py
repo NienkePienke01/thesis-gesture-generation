@@ -233,15 +233,17 @@ def convert_6d_to_3d(pose_6d: np.ndarray, device='cuda') -> np.ndarray:
 
 import random
 
-def calculate_gt_random_baseline(env):
-    all_gt_static_stats = []
-    all_gt_kine_stats = []
+import random
+
+def calculate_gt_baselines(env):
+    all_gt_static_stats, all_gt_kine_stats = [], []
+    all_gt_static_div, all_gt_kine_div = [], []
     
     print("\n" + "="*40)
-    print("3. CALCULATING 'GT RANDOM' BASELINE")
+    print("0. CALCULATING GROUND TRUTH BASELINES")
     print("="*40)
     
-    # Gather all GT statistics
+    # Gather all GT statistics and per-sequence diversities
     with env.begin() as txn:
         for key, value in tqdm(txn.cursor(), desc="Extracting GT Stats"):
             entry = pickle.loads(value)
@@ -253,12 +255,19 @@ def calculate_gt_random_baseline(env):
             
             all_gt_static_stats.append(calculate_activation_statistics(gt_static))
             all_gt_kine_stats.append(calculate_activation_statistics(gt_kine))
+            
+            # Ensure diversity_times is strictly smaller than the number of frames
+            div_samples_g = min(10000, gt_static.shape[0] - 1)
+            div_samples_k = min(10000, gt_kine.shape[0] - 1)
+            
+            all_gt_static_div.append(calculate_diversity(gt_static, diversity_times=div_samples_g).mean())
+            all_gt_kine_div.append(calculate_diversity(gt_kine, diversity_times=div_samples_k).mean())
 
     num_clips = len(all_gt_static_stats)
     if num_clips < 2:
-        return None, None
+        return None
 
-    # Create mismatched pairs
+    # Create mismatched pairs for cross-sample FD
     indices = list(range(num_clips))
     random_indices = indices.copy()
     while True:
@@ -267,30 +276,33 @@ def calculate_gt_random_baseline(env):
             break
 
     # Calculate FD between the random pairs
-    gt_random_static_fd = []
-    gt_random_kine_fd = []
-
+    gt_random_static_fd, gt_random_kine_fd = [], []
     for i, j in zip(indices, random_indices):
         # Static FD
         mu1_g, cov1_g = all_gt_static_stats[i]
         mu2_g, cov2_g = all_gt_static_stats[j]
-        gt_random_static_fd.append(calculate_frechet_distance(mu1_g, cov1_g, mu2_g, cov2_g) * 10.0) # Scaled
+        gt_random_static_fd.append(calculate_frechet_distance(mu1_g, cov1_g, mu2_g, cov2_g) * 10.0) # Scaled for readability
         
         # Kinematic FD
         mu1_k, cov1_k = all_gt_kine_stats[i]
         mu2_k, cov2_k = all_gt_kine_stats[j]
         gt_random_kine_fd.append(calculate_frechet_distance(mu1_k, cov1_k, mu2_k, cov2_k))
         
-    static_gt_random = float(np.mean(gt_random_static_fd))
-    kine_gt_random = float(np.mean(gt_random_kine_fd))
+    static_gt_div = float(np.mean(all_gt_static_div))
+    kine_gt_div = float(np.mean(all_gt_kine_div))
+    static_gt_random_fd = float(np.mean(gt_random_static_fd))
+    kine_gt_random_fd = float(np.mean(gt_random_kine_fd))
     
-    print(f"GT Random Static FD: {static_gt_random:.4f}")
-    print(f"GT Random Kinematic FD: {kine_gt_random:.4f}")
+    print(f"GT Diversity (Static): {static_gt_div:.4f}")
+    print(f"GT Random FD (Static): {static_gt_random_fd:.4f}")
+    print(f"GT Diversity (Kinematic): {kine_gt_div:.4f}")
+    print(f"GT Random FD (Kinematic): {kine_gt_random_fd:.4f}")
     
-    return static_gt_random, kine_gt_random
+    return static_gt_div, static_gt_random_fd, kine_gt_div, kine_gt_random_fd
 
 def main(args):
     env = lmdb.open(args.results, readonly=True)
+    static_gt_div, static_gt_random_fd, kine_gt_div, kine_gt_random_fd = calculate_gt_baselines(env) # GT values
     pose_fps = 30
     audio_sr = 16000
     
@@ -328,8 +340,8 @@ def main(args):
             gt_kine = (gt_3d[1:, :] - gt_3d[:-1, :]).reshape(-1, feature_dim)
             
             # Ensure diversity_times is strictly smaller than the number of frames in the clip
-            div_samples_g = min(1000, pred_static.shape[0] - 1)
-            div_samples_k = min(1000, pred_kine.shape[0] - 1)
+            div_samples_g = min(10000, pred_static.shape[0] - 1)
+            div_samples_k = min(10000, pred_kine.shape[0] - 1)
             
             # Per-sequence Diversity
             all_static_div.append(calculate_diversity(pred_static, diversity_times=div_samples_g).mean())
@@ -356,10 +368,10 @@ def main(args):
     print("2. FINAL EVALUATION METRICS (Averaged)")
     print("="*40)
     
-    print(f"Static Diversity (var_g): {static_div:.4f}")
-    print(f"Static FD (fid_g): {static_fd:.4f}")
-    print(f"Kinematic Diversity (var_k): {kinematic_div:.4f}")
-    print(f"Kinematic FD (fid_k): {kinematic_fd:.4f}")
+    print(f"Static Diversity: {static_div:.4f}")
+    print(f"Static FD: {static_fd:.4f}")
+    print(f"Kinematic Diversity: {kinematic_div:.4f}")
+    print(f"Kinematic FD: {kinematic_fd:.4f}")
     
     # Save the metrics
     input_path = Path(args.results)
@@ -370,7 +382,11 @@ def main(args):
         "static_diversity": static_div,
         "kinematic_diversity": kinematic_div, 
         "static_FD": static_fd,
-        "kinematic_FD": kinematic_fd
+        "kinematic_FD": kinematic_fd,
+        "static GT diversity": static_gt_div, 
+        "static GT FD": static_gt_random_fd, 
+        "Kinematic GT diversity": kine_gt_div,
+        "Kinematic GT FD": kine_gt_random_fd
     }
 
     output_dir = Path("evaluation_metrics_results")

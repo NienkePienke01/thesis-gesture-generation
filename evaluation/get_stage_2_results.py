@@ -38,7 +38,6 @@ def reconstruct_and_render_for_eval(target_npz_file, device, top_k, top_p, tempe
     stride = _stage2_runtime_cache["stage1_model"].downsample_factor
     chunk_frames =  _stage2_runtime_cache["segmenter"].pose_length
     num_frames = segment_data.aligned_pose.shape[0]
-    print(num_frames)
     num_chunks = math.floor((num_frames - chunk_frames) / stride) + 1
     batch_size = 1
 
