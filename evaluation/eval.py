@@ -281,7 +281,7 @@ def calculate_gt_baselines(env):
         # Static FD
         mu1_g, cov1_g = all_gt_static_stats[i]
         mu2_g, cov2_g = all_gt_static_stats[j]
-        gt_random_static_fd.append(calculate_frechet_distance(mu1_g, cov1_g, mu2_g, cov2_g) * 10.0) # Scaled for readability
+        gt_random_static_fd.append(calculate_frechet_distance(mu1_g, cov1_g, mu2_g, cov2_g)) # Scaled for readability
         
         # Kinematic FD
         mu1_k, cov1_k = all_gt_kine_stats[i]
@@ -330,8 +330,8 @@ def main(args):
             #     ba_score = align.calculate_align(onset_bt_rms, beat_right_wrist, pose_fps=pose_fps)
             
             # Convert 6D to 3D for this specific clip
-            pred_3d = convert_6d_to_3d(entry["motion"])
-            gt_3d = convert_6d_to_3d(entry["gt"])
+            pred_3d = convert_6d_to_3d(entry["motion"]) * 100.0
+            gt_3d = convert_6d_to_3d(entry["gt"]) * 100.0
             
             if is_warm_start:
                 pred_3d = pred_3d[64:]
