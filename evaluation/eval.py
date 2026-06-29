@@ -302,6 +302,10 @@ def calculate_gt_baselines(env):
 
 def main(args):
     env = lmdb.open(args.results, readonly=True)
+    is_warm_start = "warm_start_True" in args.results
+    print(f"Detected warm_start parameter: {is_warm_start}")
+    if is_warm_start:
+        print("Note: Stripping the first 64 seed frames from all clips before evaluation.")
     static_gt_div, static_gt_random_fd, kine_gt_div, kine_gt_random_fd = calculate_gt_baselines(env) # GT values
     pose_fps = 30
     audio_sr = 16000
@@ -329,6 +333,10 @@ def main(args):
             pred_3d = convert_6d_to_3d(entry["motion"])
             gt_3d = convert_6d_to_3d(entry["gt"])
             
+            if is_warm_start:
+                pred_3d = pred_3d[64:]
+                gt_3d = gt_3d[64:]
+
             feature_dim = pred_3d.shape[-1]
             
             # Static Formatting

@@ -7,6 +7,7 @@ import torch
 import torch.nn.functional as F
 import lmdb
 import pickle
+import copy
 from pathlib import Path
 from types import SimpleNamespace
 from tqdm import tqdm
@@ -20,89 +21,145 @@ from data_processing.seamless_dataset import SeamlessDataset
 import visualisation.reconstruction_tab_whole_body as stage_1_reconstruction
 from visualisation.visualise_stage_2 import sample_top_p_k, generate_motion_sequence, setup_reconstruction, _stage2_runtime_cache, load_stage2_and_stage1_pipeline
 from datetime import datetime
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 os.environ['PYOPENGL_PLATFORM'] = 'egl'
 os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 
-def reconstruct_and_render_for_eval(target_npz_file, device, top_k, top_p, temperature, warm_start, clip_time):
-    print(f"We are now handling: {target_npz_file}")
-    setup_data = setup_reconstruction(target_npz_file, device, load_vertices=False, max_time=clip_time)
-    if isinstance(setup_data, tuple) and len(setup_data) == 2: # for if the model is not loaded
-        return setup_data
+def reconstruct_and_render_for_eval(target_npz_file, device, top_k, top_p, temperature, warm_start, chunk_frames=300):
+    # Load the entire sequence
+    setup_data = setup_reconstruction(target_npz_file, device, load_vertices=False, max_time=None)
+    if isinstance(setup_data, tuple) and len(setup_data) == 2:
+        return []
 
-    original_loader, segment_data, partner_segment_data, relationship = setup_data
+    original_loader, full_segment_data, full_partner_segment_data, relationship = setup_data
     if original_loader.num_frames <= 0:
-        return None, None, None
+        return []
 
     fps = _stage2_runtime_cache["segmenter"].pose_fps
-    stride = _stage2_runtime_cache["stage1_model"].downsample_factor
-    chunk_frames =  _stage2_runtime_cache["segmenter"].pose_length
-    num_frames = segment_data.aligned_pose.shape[0]
-    num_chunks = math.floor((num_frames - chunk_frames) / stride) + 1
-    batch_size = 1
-
-    # Do inference on stage 2
-    pose_codes = generate_motion_sequence(
-        device, 
-        segment_data, partner_segment_data, 
-        chunk_frames, stride, num_chunks, batch_size, 
-        temperature=temperature, top_p=top_p, top_k=top_k, warm_start=warm_start
-    )
-
-    # Turn the large tensor of motion codes into a list of tensors of size "16" to match stage 1 reconstruction
-    downsample_factor =  _stage2_runtime_cache["stage1_model"].downsample_factor
-    chunk_codes = (chunk_frames // downsample_factor)
-    stride = _stage2_runtime_cache["segmenter"].stride # stride value for reconstruction
-
-    # Sliding window chunking to keep stride overlap
-    token_chunks = pose_codes.unfold(dimension=1, size=chunk_codes, step=stride // downsample_factor)
-    token_chunks = token_chunks.permute(1, 0, 3, 2)
-    pose_codes_list = list(token_chunks.unbind(dim=0)) # Permute from [batch, num_chunks, chunk_frames, downsample_factor] to a list of [batch, chunk_frames, downsample_factor] tensors
-
-    # Update the main variables to match the proper iterations of the reconstruction loop
-    num_chunks = len(pose_codes_list)
-    valid_frames = (num_chunks - 1) * stride + chunk_frames
-    full_body_joint_count = 43
-    final_reconstructed_6d = torch.zeros((batch_size, valid_frames, full_body_joint_count, 6), device=device)
-    pre_frames = chunk_frames - stride
-    weight_mask = torch.zeros((batch_size, valid_frames, 1, 1), device=device)
-    fade_in = torch.linspace(0.0, 1.0, steps=pre_frames, device=device).view(1, -1, 1, 1)
-    fade_out = torch.linspace(1.0, 0.0, steps=pre_frames, device=device).view(1, -1, 1, 1)
-
-    final_6d_pose = stage_1_reconstruction.decode_sequence(
-        device, pose_codes_list, chunk_frames, stride, num_chunks, 
-        full_body_joint_count, batch_size, pre_frames, 
-        final_reconstructed_6d, weight_mask, fade_in, fade_out, model=_stage2_runtime_cache["stage1_model"]
-    )
-
-    # Convert Ground Truth to 6D
-    gt_pose_sliced = segment_data.aligned_pose[:valid_frames].unsqueeze(0).to(device)
-    gt_pose_matrix = rc.axis_angle_to_matrix(gt_pose_sliced.reshape(batch_size, valid_frames, 43, 3))
-    gt_6d_pose = rc.matrix_to_rotation_6d(gt_pose_matrix)
-
-    # Crop to min frames to ensure perfectly aligned arrays
-    min_frames = min(final_6d_pose.shape[1], gt_6d_pose.shape[1])
-    
-    pred_6d = final_6d_pose[0, :min_frames, ...].reshape(min_frames, 258)
-    gt_6d = gt_6d_pose[0, :min_frames, ...].reshape(min_frames, 258)
-
-    
+    audio_hz = _stage2_runtime_cache["segmenter"].audio_hz
     audio_sr = _stage2_runtime_cache["segmenter"].audio_sr
-    expected_audio_samples = int((min_frames / fps) * audio_sr)
     
-    # Handle tensor vs numpy array
-    raw_audio = segment_data.aligned_raw_audio
-    if torch.is_tensor(raw_audio):
-        raw_audio = raw_audio.cpu().numpy()
-        
-    audio_cropped = raw_audio[:expected_audio_samples]
+    stride = _stage2_runtime_cache["stage1_model"].downsample_factor
+    ar_chunk_frames = _stage2_runtime_cache["segmenter"].pose_length 
+    
+    seed_frames = 64 if warm_start else 0 # Overlapping windows if warm_start
+    window_frames = chunk_frames + seed_frames # chunk_frames+64 frames total per generation pass
+    
+    total_frames = full_segment_data.aligned_pose.shape[0]
+    
+    # Calculate how many full chunk_frames-frame chunks we can extract, considering the +64 frame seed requirement
+    num_10s_clips = (total_frames - seed_frames) // chunk_frames
+    
+    generated_clips = []
 
-    return pred_6d.cpu().numpy(), gt_6d.cpu().numpy(), audio_cropped
+    # Process each 10s chunk independently
+    for i in range(num_10s_clips):
+        # Stride by exactly chunk_frames frames. 
+        # The first 64 frames of this new chunk will perfectly overlap the last 64 frames of the previous chunk.
+        start_frame = i * chunk_frames 
+        end_frame = start_frame + window_frames
+        
+        # Audio alignment for slicing the chunk_frames+64-frame window
+        audio_start = int((start_frame / fps) * audio_hz)
+        audio_end = int((end_frame / fps) * audio_hz)
+        
+        raw_start = int((start_frame / fps) * audio_sr)
+        raw_end = int((end_frame / fps) * audio_sr)
+
+        # Create isolated segment data for this specific window
+        isolated_segment = copy.copy(full_segment_data)
+        isolated_segment.aligned_pose = full_segment_data.aligned_pose[start_frame:end_frame]
+        isolated_segment.aligned_wav2vec_audio = full_segment_data.aligned_wav2vec_audio[audio_start:audio_end]
+        
+        if hasattr(full_segment_data, 'aligned_raw_audio') and full_segment_data.aligned_raw_audio is not None:
+            isolated_segment.aligned_raw_audio = full_segment_data.aligned_raw_audio[raw_start:raw_end]
+        
+        isolated_partner = None
+        if full_partner_segment_data is not None:
+            isolated_partner = copy.copy(full_partner_segment_data)
+            isolated_partner.aligned_wav2vec_audio = full_partner_segment_data.aligned_wav2vec_audio[audio_start:audio_end]
+
+        # Generate just this chunk_frames+64-frame chunk
+        batch_size = 1
+        num_ar_chunks = math.floor((window_frames - ar_chunk_frames) / stride) + 1
+        
+        pose_codes = generate_motion_sequence(
+            device, 
+            isolated_segment, isolated_partner, 
+            ar_chunk_frames, stride, num_ar_chunks, batch_size, 
+            temperature=temperature, top_p=top_p, top_k=top_k, warm_start=warm_start
+        )
+
+        # Decode tokens to 6D
+        downsample_factor = _stage2_runtime_cache["stage1_model"].downsample_factor
+        chunk_codes = (ar_chunk_frames // downsample_factor)
+        dec_stride = _stage2_runtime_cache["segmenter"].stride
+
+        token_chunks = pose_codes.unfold(dimension=1, size=chunk_codes, step=dec_stride // downsample_factor)
+        token_chunks = token_chunks.permute(1, 0, 3, 2)
+        pose_codes_list = list(token_chunks.unbind(dim=0))
+
+        num_dec_chunks = len(pose_codes_list)
+        valid_frames = (num_dec_chunks - 1) * dec_stride + ar_chunk_frames
+        full_body_joint_count = 43
+        
+        final_reconstructed_6d = torch.zeros((batch_size, valid_frames, full_body_joint_count, 6), device=device)
+        pre_frames = ar_chunk_frames - dec_stride
+        weight_mask = torch.zeros((batch_size, valid_frames, 1, 1), device=device)
+        fade_in = torch.linspace(0.0, 1.0, steps=pre_frames, device=device).view(1, -1, 1, 1)
+        fade_out = torch.linspace(1.0, 0.0, steps=pre_frames, device=device).view(1, -1, 1, 1)
+
+        final_6d_pose = stage_1_reconstruction.decode_sequence(
+            device, pose_codes_list, ar_chunk_frames, dec_stride, num_dec_chunks, 
+            full_body_joint_count, batch_size, pre_frames, 
+            final_reconstructed_6d, weight_mask, fade_in, fade_out, model=_stage2_runtime_cache["stage1_model"]
+        )
+
+        # Retrieve isolated Ground Truth to map correctly to this chunk
+        gt_pose_sliced = isolated_segment.aligned_pose[:valid_frames].unsqueeze(0).to(device)
+        gt_pose_matrix = rc.axis_angle_to_matrix(gt_pose_sliced.reshape(batch_size, valid_frames, 43, 3))
+        gt_6d_pose = rc.matrix_to_rotation_6d(gt_pose_matrix)
+
+        min_frames = min(final_6d_pose.shape[1], gt_6d_pose.shape[1])
+        
+        pred_6d = final_6d_pose[0, :min_frames, ...].reshape(min_frames, 258).cpu().numpy()
+        gt_6d = gt_6d_pose[0, :min_frames, ...].reshape(min_frames, 258).cpu().numpy()
+        
+        # CROP THE SEED FRAMES (Save ONLY the generated chunk_frames frames)
+        if warm_start:
+            pred_6d = pred_6d[seed_frames:]
+            gt_6d = gt_6d[seed_frames:]
+            
+        # Ensure array is exactly chunk_frames frames long to prevent stride-tail artifacts
+        pred_6d = pred_6d[:chunk_frames]
+        gt_6d = gt_6d[:chunk_frames]
+        
+        # Calculate precise audio cropping for exactly chunk_frames frames
+        audio_eval_samples = int((chunk_frames / fps) * audio_sr)
+        audio_seed_offset = int((seed_frames / fps) * audio_sr) if warm_start else 0
+        
+        raw_audio = isolated_segment.aligned_raw_audio
+        if torch.is_tensor(raw_audio):
+            raw_audio = raw_audio.cpu().numpy()
+            
+        if raw_audio is not None:
+            # Crop the audio to match the pure generated frames
+            audio_cropped = raw_audio[audio_seed_offset : audio_seed_offset + audio_eval_samples]
+        else:
+            audio_cropped = None
+
+        generated_clips.append({
+            "motion": pred_6d,
+            "gt": gt_6d,
+            "audio": audio_cropped
+        })
+
+    return generated_clips
 
 def run_batch_inference(args):
     device = torch.device(args.device)
     
-    # Load models
     print("Initializing pipeline...")
     status = load_stage2_and_stage1_pipeline(
         args.stage2_config, 
@@ -112,50 +169,48 @@ def run_batch_inference(args):
     )
     print(status)
 
-    # Get the test data
     print(f"Loading dataset from {args.test_folder}...")
     dataset = SeamlessDataset(args.test_folder)
     print(f"Found {len(dataset)} valid interaction files based on manifest.")
 
     start_time = datetime.now().strftime("%Y%m%d_%H%M")
     project_name = _stage2_runtime_cache.get('project_name', 'unknown')
-    output_dir = PROJECT_ROOT / "evaluation_results" / f"evaluation_{start_time}_clip_{args.clip_time}s_warm_start_{args.warm_start}-{project_name}"
+    
+    output_dir = PROJECT_ROOT / "evaluation_results" / f"evaluation_{start_time}_chunks_{args.chunk_frames}_warm_start_{args.warm_start}-{project_name}"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     env = lmdb.open(str(output_dir), map_size=int(1024**3 * args.max_gb))
     sample_idx = 0
 
-    # Run Inference Loop
     for file_id in tqdm(dataset.file_ids, desc="Generating Gestures"):
         file_path = dataset.samples.get(file_id)
         if not file_path:
             print(f"Warning: {file_id} missing from mapped samples, skipping.")
             continue
         
-        # Get the predicted 6d output values
-        pred_6d, gt_6d, raw_audio = reconstruct_and_render_for_eval(
-                str(file_path), device, args.top_k, args.top_p, args.temperature, args.warm_start, args.clip_time
+        generated_clips = reconstruct_and_render_for_eval(
+                str(file_path), device, args.top_k, args.top_p, args.temperature, args.warm_start, chunk_frames=args.chunk_frames
             )
         
-        if pred_6d is not None:
+        if generated_clips:
             with env.begin(write=True) as transaction:
-                entry = {
-                    "motion": pred_6d,
-                    "gt": gt_6d,
-                    "audio": raw_audio,
-                    "clip_length_seconds": args.clip_time,
-                    "file_id": file_id,
-                    "warm_start": args.warm_start
-                }
-                key = f"{sample_idx:08d}".encode("ascii")
-                transaction.put(key, pickle.dumps(entry))
-            sample_idx += 1
+                for i, clip in enumerate(generated_clips):
+                    entry = {
+                        "motion": clip["motion"],
+                        "gt": clip["gt"],
+                        "audio": clip["audio"],
+                        "file_id": f"{file_id}_chunk_{i}"
+                    }
+                    
+                    key = f"{sample_idx:08d}".encode("ascii")
+                    transaction.put(key, pickle.dumps(entry))
+                    sample_idx += 1
         else:
-            print(f"Warning: {file_id} has no pred_6d data, skipping.")
+            print(f"Warning: {file_id} produced no valid generation clips.")
 
     env.close()
     if sample_idx > 0:
-        print(f"Successfully saved {sample_idx} sequences to LMDB at {output_dir}")
+        print(f"Successfully saved {sample_idx} chunks ({args.chunk_frames} frames each) to LMDB at {output_dir}")
     else:
         print("No valid sequences were processed.")
 
@@ -170,7 +225,7 @@ if __name__ == "__main__":
     parser.add_argument("--top_k", type=int, default=50)
     parser.add_argument("--top_p", type=float, default=0.90)
     parser.add_argument("--warm_start", action="store_true")
-    parser.add_argument("--clip_time", type=int, default=30) # This is in seconds
-    parser.add_argument("--max_gb", type=int, default=2) # This is in seconds
+    parser.add_argument("--max_gb", type=int, default=2) 
+    parser.add_argument("--chunk_frames", type=int, default=300) 
     
     run_batch_inference(parser.parse_args())
