@@ -22,9 +22,9 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 os.environ['PYOPENGL_PLATFORM'] = 'egl'
 os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 
-def reconstruct_and_render_for_eval(target_npz_file, device, top_k, top_p, temperature, warm_start):
+def reconstruct_and_render_for_eval(target_npz_file, device, top_k, top_p, temperature, warm_start, clip_time):
     print(f"We are now handling: {target_npz_file}")
-    setup_data = setup_reconstruction(target_npz_file, device, load_vertices=False)
+    setup_data = setup_reconstruction(target_npz_file, device, load_vertices=False, max_time=clip_time)
     if isinstance(setup_data, tuple) and len(setup_data) == 2: # for if the model is not loaded
         return setup_data
 
@@ -32,9 +32,11 @@ def reconstruct_and_render_for_eval(target_npz_file, device, top_k, top_p, tempe
     if original_loader.num_frames <= 0:
         return None, None, None
 
+    fps = _stage2_runtime_cache["segmenter"].pose_fps
     stride = _stage2_runtime_cache["stage1_model"].downsample_factor
     chunk_frames =  _stage2_runtime_cache["segmenter"].pose_length
     num_frames = segment_data.aligned_pose.shape[0]
+    print(num_frames)
     num_chunks = math.floor((num_frames - chunk_frames) / stride) + 1
     batch_size = 1
 
@@ -84,11 +86,10 @@ def reconstruct_and_render_for_eval(target_npz_file, device, top_k, top_p, tempe
     gt_6d = gt_6d_pose[0, :min_frames, ...].reshape(min_frames, 258)
 
     
-    fps = _stage2_runtime_cache["segmenter"].pose_fps
     audio_sr = _stage2_runtime_cache["segmenter"].audio_sr
     expected_audio_samples = int((min_frames / fps) * audio_sr)
     
-    # Handle tensor vs numpy array gracefully
+    # Handle tensor vs numpy array
     raw_audio = segment_data.aligned_raw_audio
     if torch.is_tensor(raw_audio):
         raw_audio = raw_audio.cpu().numpy()
@@ -128,7 +129,7 @@ def run_batch_inference(args):
         
         # Get the predicted 6d output values
         pred_6d, gt_6d, raw_audio = reconstruct_and_render_for_eval(
-                str(file_path), device, args.top_k, args.top_p, args.temperature, args.warm_start
+                str(file_path), device, args.top_k, args.top_p, args.temperature, args.warm_start, args.clip_time
             )
         if pred_6d is not None:
             all_pred.append(pred_6d)
@@ -166,5 +167,6 @@ if __name__ == "__main__":
     parser.add_argument("--top_k", type=int, default=50)
     parser.add_argument("--top_p", type=float, default=0.90)
     parser.add_argument("--warm_start", action="store_true")
+    parser.add_argument("--clip_time", type=int, default=30) # This is in seconds
     
     run_batch_inference(parser.parse_args())

@@ -240,7 +240,7 @@ class SeamlessSegmenter:
         env.close()
         logger.info(f"Finished worker {self.worker_id}. Total segments cached: {sample_idx}")
 
-    def _get_loader_segmentation_data(self, loader, partner_loader=None):
+    def _get_loader_segmentation_data(self, loader, partner_loader=None, max_time=None):
         device = next(self.bert_model.parameters()).device
         data = LoaderSegmentationData()
         full_pose = loader.get_trainable_pose() # (frames, 129)
@@ -273,7 +273,7 @@ class SeamlessSegmenter:
         
         # align the audio and pose
         data.aligned_pose, data.aligned_raw_audio, data.aligned_wav2vec_audio, data.aligned_hubert_audio, data.aligned_words, data.aligned_emotion_list, data.aligned_semantic_values, data.aligned_off_screen_hand_values, data.aligned_conversation_states = self._align_data(
-            full_pose, audio_data, wav2vec_data, audio_embeddings, word_list, emotion_category_frames, semantic_values_list, loader.meta_data.hand_offscreen, raw_conversation_states
+            full_pose, audio_data, wav2vec_data, audio_embeddings, word_list, emotion_category_frames, semantic_values_list, loader.meta_data.hand_offscreen, raw_conversation_states, max_time=max_time
         )
 
         # see how many 64-frame chunks fit
@@ -289,7 +289,7 @@ class SeamlessSegmenter:
         ], dtype=np.float32)
         return data
     
-    def _align_data(self, full_pose, raw_audio, wav2vec_audio_vector, hubert_audio_vectors, word_list, emotion_list, semantic_values_list, off_screen_hand_values, raw_conversation_states):
+    def _align_data(self, full_pose, raw_audio, wav2vec_audio_vector, hubert_audio_vectors, word_list, emotion_list, semantic_values_list, off_screen_hand_values, raw_conversation_states, max_time=None):
         """
         Aligns the motion .npz and audio .wav by finding the shortest common duration 
         """
@@ -297,6 +297,9 @@ class SeamlessSegmenter:
         round_seconds_audio = hubert_audio_vectors.shape[0] / self.audio_hz
 
         round_seconds_common = min(round_seconds_pose, round_seconds_audio)
+
+        if max_time is not None:
+            round_seconds_common = min(round_seconds_common, max_time)
         
         # (skip first/last x amount of seconds)
         clipose_start_time = self.clean_first

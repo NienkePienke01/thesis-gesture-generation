@@ -172,46 +172,61 @@ def calculate_frechet_distance(mu1: np.ndarray, sigma1: np.ndarray, mu2: np.ndar
 
 def convert_6d_to_3d(pose_6d: np.ndarray, device='cuda') -> np.ndarray:
     frames = pose_6d.shape[0]
+    chunk_size = 512
     
     # Convert to Torch Tensor and Reshape
     pose_6d_tensor = torch.tensor(pose_6d, dtype=torch.float32, device=device).reshape(frames, 43, 6)
     
-    #Convert 6D -> Matrix -> Axis-Angle
-    pose_axis_angle = rc.matrix_to_axis_angle(rc.rotation_6d_to_matrix(pose_6d_tensor))
+    # Convert 6D -> Matrix -> Axis-Angle and flatten to (frames, 129)
+    pose_axis_angle = rc.matrix_to_axis_angle(rc.rotation_6d_to_matrix(pose_6d_tensor)).reshape(frames, -1)
+
+    num_frames = pose_axis_angle.shape[0]
     
-    # Map the 43 joints back to full SMPL-H 52-joint structure
+    # Split the 129-dim vector back into its components
+    # Indices: Body (0:39), Left Hand (39:84), Right Hand (84:129)
+    rec_body_flat = pose_axis_angle[:, :39]
+    rec_left_hand_flat = pose_axis_angle[:, 39:84]
+    rec_right_hand_flat = pose_axis_angle[:, 84:129]
+
+    # Reshape components
+    rec_body = rec_body_flat.reshape(num_frames, 13, 3)
+    left_hand = rec_left_hand_flat.reshape(num_frames, 15, 3)
+    right_hand = rec_right_hand_flat.reshape(num_frames, 15, 3)
+
+    # Create a full 21-joint body pose tensor initialized to zero
+    full_body_pose = torch.zeros((num_frames, 21, 3), device=device)
+
     body_mask = [0, 1, 3, 4, 6, 7, 9, 10]
     keep_indices = [i for i in range(21) if i not in body_mask]
+    eval_indices = [2, 5, 8, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20] + list(range(22, 52))
     
-    full_body_pose = torch.zeros((frames, 21, 3), device=device)
-    full_body_pose[:, keep_indices, :] = pose_axis_angle[:, :13, :]
-    left_hand_pose = pose_axis_angle[:, 13:28, :]
-    right_hand_pose = pose_axis_angle[:, 28:43, :]
-    global_orient = torch.zeros((frames, 1, 3), device=device)
-    
+    # Map the 13 reconstructed joints back to their original skeletal indices
+    full_body_pose[:, keep_indices, :] = rec_body
     smplh = get_smplh_model(device, gender='male')
+
     all_joints_3d = []
-    
-    # Extract the 43 specific 3D joint positions (ignore lower body)
-    eval_indices = [idx + 1 for idx in keep_indices] + list(range(22, 52))
-    
-    with torch.no_grad():
-        for i in range(0, frames, 512):
-            end = min(i + 512, frames)
-            curr_batch_size = end - i
-            
-            output = smplh(
-                global_orient=global_orient[i:end].reshape(curr_batch_size, -1),
-                body_pose=full_body_pose[i:end].reshape(curr_batch_size, -1),
-                left_hand_pose=left_hand_pose[i:end].reshape(curr_batch_size, -1),
-                right_hand_pose=right_hand_pose[i:end].reshape(curr_batch_size, -1),
-                betas=smplh.betas.expand(curr_batch_size, -1),
-                return_verts=False
-            )
-            
+
+    for i in range(0, num_frames, chunk_size):
+        end = min(i + chunk_size, num_frames)
+        curr_batch_size = end - i
+        smplh.batch_size = curr_batch_size
+
+        # Slice the inputs specifically for the current batch and flatten the last dimension
+        current_batch = {
+            'body_pose': full_body_pose[i:end].reshape(curr_batch_size, -1),
+            'left_hand_pose': left_hand[i:end].reshape(curr_batch_size, -1),
+            'right_hand_pose': right_hand[i:end].reshape(curr_batch_size, -1),
+            'global_orient': torch.zeros((curr_batch_size, 3), device=device),
+            'transl': torch.zeros((curr_batch_size, 3), device=device),
+            'betas': smplh.betas.expand(curr_batch_size, -1),
+            'rot2pose': True
+        }
+
+        with torch.no_grad():
+            output = smplh(**current_batch)
             joints_3d = output.joints[:, eval_indices, :]
             all_joints_3d.append(joints_3d.cpu().numpy())
-            
+        
     return np.concatenate(all_joints_3d, axis=0).reshape(frames, -1)
 
 
@@ -224,55 +239,34 @@ def main(args):
     
     pose_fps = 30
     audio_sr = 16000
-    chunk_seconds = 3600
-    
-    pose_chunk_size = chunk_seconds * pose_fps
-    
-    total_pose_frames = pred_data.shape[0]
     
     # Storage for aggregated metrics
-    ba_scores = []
-    all_pred_3d = []
-    all_gt_3d = []
-
     print("="*40)
     print("1. CALCULATING BEAT ALIGNMENT & 3D CONVERSION (Chunked)")
     print("="*40)
-
-    # Process audio in chunks
-    for pose_start in tqdm(range(0, total_pose_frames, pose_chunk_size), desc="Processing Chunks"):
-        pose_end = min(pose_start + pose_chunk_size, total_pose_frames)
-        audio_start = int((pose_start / pose_fps) * audio_sr)
-        audio_end = int((pose_end / pose_fps) * audio_sr)
-
-        pred_chunk = pred_data[pose_start:pose_end]
-        gt_chunk = gt_data[pose_start:pose_end]
-        audio_chunk = audio_data[audio_start:audio_end]
         
-        align = Alignment(sigma=3, order=4)
-        onset_raw, onset_bt, onset_bt_rms = align.load_audio(wave=audio_chunk, without_file=True, sr_audio=audio_sr)
+    align = Alignment(sigma=3, order=4)
+    onset_raw, onset_bt, onset_bt_rms = align.load_audio(wave=audio_data, without_file=True, sr_audio=audio_sr)
         
-        if onset_raw is not None:
-            beats = align.load_pose(pose=pred_chunk, t_start=0, t_end=None, pose_fps=pose_fps)
-            beat_right_wrist = beats[2] 
-            chunk_ba = align.calculate_align(onset_bt_rms, beat_right_wrist, pose_fps=pose_fps)
-            ba_scores.append(chunk_ba)
+    if onset_raw is not None:
+        beats = align.load_pose(pose=pred_data, t_start=0, t_end=None, pose_fps=pose_fps)
+        beat_right_wrist = beats[2] 
+        ba_score = align.calculate_align(onset_bt_rms, beat_right_wrist, pose_fps=pose_fps)
             
-        # Convert 6D to 3D
-        all_pred_3d.append(convert_6d_to_3d(pred_chunk))
-        all_gt_3d.append(convert_6d_to_3d(gt_chunk))
+    # Convert 6D to 3D
+    pred_data = (convert_6d_to_3d(pred_data))
+    gt_data = (convert_6d_to_3d(gt_data))
 
     # Finalize BA Score
-    final_ba_score = np.mean(ba_scores) if ba_scores else 0.0
-    print(f"Final Average Beat Alignment Score (BA): {final_ba_score:.4f}")
+    print(f"Final Average Beat Alignment Score (BA): {ba_score:.4f}")
 
     print("\n" + "="*40)
-    print("2. CALCULATING GLOBAL FGD & DIVERSITY (3D Joint Space)")
+    print("2. CALCULATING GLOBAL FD & DIVERSITY (3D Joint Space)")
     print("="*40)
     
     # Concatenate all 3D chunks into single massive arrays for statistical math
-    pred_3d = np.concatenate(all_pred_3d, axis=0) * 100.0 # Scale coordinates from meters to centimeters to match dyadit benchmark
-    gt_3d = np.concatenate(all_gt_3d, axis=0) * 100.0
+    pred_3d = pred_data
+    gt_3d = gt_data
     
     feature_dim = pred_3d.shape[-1]
 
@@ -281,14 +275,14 @@ def main(args):
     gt_pose_last = gt_3d.reshape(-1, feature_dim)
 
     # Static Diversity
-    var_g = calculate_diversity(pred_pose_last)
+    var_g = calculate_diversity(pred_pose_last, diversity_times=1000)
     print(f"Static Diversity (var_g): {var_g.mean():.4f}")
     
-    # Static FGD
+    # Static FD
     pred_mu_g, pred_cov_g = calculate_activation_statistics(pred_pose_last)
     gt_mu_g, gt_cov_g = calculate_activation_statistics(gt_pose_last)
     fid_g = calculate_frechet_distance(gt_mu_g, gt_cov_g, pred_mu_g, pred_cov_g)
-    print(f"Static FGD (fid_g): {fid_g:.4f}")
+    print(f"Static FD (fid_g): {fid_g:.4f}")
     
     # Kinematic processing (Velocity)
     pred_motion = pred_3d[1:, :] - pred_3d[:-1, :]
@@ -298,14 +292,14 @@ def main(args):
     gt_motion_last = gt_motion.reshape(-1, feature_dim)
     
     # Calculate diversity on the velocity (kinematic)
-    var_k = calculate_diversity(pred_motion_last) 
+    var_k = calculate_diversity(pred_motion_last, diversity_times=1000) 
     print(f"Kinematic Diversity (var_k): {var_k.mean():.4f}")
 
-    # Kinematic FGD
+    # Kinematic FD
     pred_mu_k, pred_cov_k = calculate_activation_statistics(pred_motion_last)
     gt_mu_k, gt_cov_k = calculate_activation_statistics(gt_motion_last)
     fid_k = calculate_frechet_distance(gt_mu_k, gt_cov_k, pred_mu_k, pred_cov_k)
-    print(f"Kinematic FGD (fid_k): {fid_k:.4f}")
+    print(f"Kinematic FD (fid_k): {fid_k:.4f}")
 
     # Save the metrics
     input_path = Path(args.results)
@@ -313,11 +307,11 @@ def main(args):
 
     metrics = {
         "project_name": project_name,
-        "ba_score": float(final_ba_score) if 'ba_score' in locals() else None,
+        "ba_score": float(ba_score) if 'ba_score' in locals() else None,
         "static_diversity": float(var_g.mean()),
         "kinematic_diversity": float(var_k.mean()), 
-        "static_fgd": float(fid_g),
-        "kinematic_fgd": float(fid_k)
+        "static_FD": float(fid_g),
+        "kinematic_FD": float(fid_k)
     }
 
     start_time = datetime.now().strftime("%Y%m%d_%H%M")

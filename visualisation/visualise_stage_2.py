@@ -89,7 +89,7 @@ def load_stage2_and_stage1_pipeline(stage2_config_path, stage2_checkpoint_path, 
     except Exception as e:
         return f"Status: Framework loading failure - {str(e)}"
 
-def setup_reconstruction(target_npz_path, device, load_vertices=True):
+def setup_reconstruction(target_npz_path, device, load_vertices=True, max_time=None):
     if _stage2_runtime_cache["stage1_model"] is None or _stage2_runtime_cache["stage2_model"] is None or _stage2_runtime_cache["segmenter"] is None:
         return None, "Status: Please load the model(s) and segmenter first."
 
@@ -107,10 +107,10 @@ def setup_reconstruction(target_npz_path, device, load_vertices=True):
             partner_loader = utils.SeamlessSMPLHLoader(partner_path, device=device, with_meta_data=True, load_vertices=False)
     
     # Get the aligned data from the segmenter (still in full shape all frames together)
-    segment_data = segmenter._get_loader_segmentation_data(original_loader, partner_loader)
+    segment_data = segmenter._get_loader_segmentation_data(original_loader, partner_loader, max_time)
     partner_segment_data = None
     if partner_loader is not None:
-        partner_segment_data = segmenter._get_loader_segmentation_data(partner_loader, original_loader)
+        partner_segment_data = segmenter._get_loader_segmentation_data(partner_loader, original_loader, max_time)
     else:
         print("\nWARNING: PARTNER WAS NOT FOUND! USING ZERO DATA FOR PARTNER AUDIO\n")
     relationship = get_relationship_id(original_loader)
