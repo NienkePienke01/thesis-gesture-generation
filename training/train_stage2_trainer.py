@@ -17,6 +17,7 @@ from tqdm import tqdm
 from datetime import datetime
 from .train_ae_trainer_seamless import find_free_port, ddp_setup
 from models_dyadit.vqvae_downsampled import TemporalVertexCodecDownsampled
+import subprocess
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 checkpoint_dir = PROJECT_ROOT / "checkpoints_stage_2"
@@ -149,7 +150,67 @@ def train_model(rank, gpu_amount_size, shared_port, args):
 
     if rank == 0:
         model_state = trainer.model.module.state_dict() if gpu_amount_size > 1 else trainer.model.state_dict()
-        torch.save(model_state, local_checkpoint_dir / f"stage2_final_epoch_{global_epoch}.bin")
+        final_ckpt_path = local_checkpoint_dir / f"stage2_final_epoch_{global_epoch}.bin"
+        torch.save(model_state, final_ckpt_path)
+
+        # Only run evaluation, if there is evaluation config present in the main stage 2 config
+        if hasattr(args, "evaluation"):
+            print("\n" + "="*50)
+            print("STARTING AUTOMATED EVALUATION PIPELINE")
+            print("="*50)
+            
+            # Nuke the trainer and clear VRAM to prevent CUDA out of memory
+            del trainer
+            torch.cuda.empty_cache()
+            
+            eval_args = args.evaluation
+            chunks = eval_args.chunk_frames if isinstance(eval_args.chunk_frames, list) else [eval_args.chunk_frames]
+            
+            # Generate one timestamp for this entire evaluation run
+            eval_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            
+            for chunk in chunks:
+                print(f"\n>>> Running Inference for chunk size: {chunk} frames")
+                
+                # Set the paths we want the child scripts to use
+                explicit_lmdb_path = PROJECT_ROOT / "evaluation_results" / f"eval_auto_{args.project}_chunk_{chunk}_{eval_timestamp}"
+                explicit_metrics_path = PROJECT_ROOT / "evaluation_metrics_results" / f"metrics_auto_{args.project}_chunk_{chunk}_{eval_timestamp}.json"
+                infer_cmd_prefix = getattr(eval_args, "infer_cmd_prefix", ["python"])
+
+                # Run Inference
+                infer_cmd = infer_cmd_prefix + [
+                    "--stage2_config", args.config_path,
+                    "--stage2_checkpoint", str(final_ckpt_path),
+                    "--segmenter_config", eval_args.segmenter_config,
+                    "--test_folder", eval_args.test_folder,
+                    "--chunk_frames", str(chunk),
+                    "--max_gb", str(eval_args.max_gb),
+                    "--device", "cuda",
+                    "--output_dir", str(explicit_lmdb_path)
+                ]
+                subprocess.run(infer_cmd, check=True)
+                
+                print(f"\n>>> Running Evaluation on {explicit_lmdb_path.name}")
+                
+                eval_cmd_prefix = getattr(eval_args, "eval_cmd_prefix", ["python"])
+                # Run Evaluation
+                eval_cmd = eval_cmd_prefix + [
+                    "--results", str(explicit_lmdb_path),
+                    "--metrics_output", str(explicit_metrics_path)
+                ]
+                subprocess.run(eval_cmd, check=True)
+                
+                # Parse and Log to WandB
+                if explicit_metrics_path.exists():
+                    with open(explicit_metrics_path, 'r') as f:
+                        metrics = json.load(f)
+                    
+                    wandb_log_dict = {f"eval_{chunk}_frames/{k}": v for k, v in metrics.items() if isinstance(v, (int, float))}
+                    wandb.log(wandb_log_dict)
+                    print(f"Successfully logged metrics for {chunk} frames to WandB!")
+                else:
+                    print(f"Error: Expected metrics file at {explicit_metrics_path} but it was not found.")
+
         wandb.finish()
 
     destroy_process_group()
@@ -177,6 +238,9 @@ def main():
         args.stage_1_pretrain = SimpleNamespace(**config_dict["stage_1_pretrain"])
     else:
         args.stage_1_pretrain = None
+
+    if "evaluation" in config_dict:
+        args.evaluation = SimpleNamespace(**config_dict["evaluation"])
 
     args.model_params = SimpleNamespace(**config_dict["model_params"])
 

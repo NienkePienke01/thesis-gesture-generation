@@ -286,10 +286,10 @@ def reconstruct_and_render(target_npz_file, device, top_k, top_p, temperature, w
     fade_in = torch.linspace(0.0, 1.0, steps=pre_frames, device=device).view(1, -1, 1, 1)
     fade_out = torch.linspace(1.0, 0.0, steps=pre_frames, device=device).view(1, -1, 1, 1)
 
-    print("="*50)
-    print(f"Num chunks is of size {num_chunks} and the list is of size {len(pose_codes_list)} and pose_codes has a shape of {pose_codes.shape} and an entry in the list has shape {pose_codes_list[0].shape}")
-    print(f"{pose_codes_list}")
-    print("="*50)
+    # print("="*50)
+    # print(f"Num chunks is of size {num_chunks} and the list is of size {len(pose_codes_list)} and pose_codes has a shape of {pose_codes.shape} and an entry in the list has shape {pose_codes_list[0].shape}")
+    # print(f"{pose_codes_list}")
+    # print("="*50)
     final_6d_pose = stage_1_reconstruction.decode_sequence(
         device, pose_codes_list, chunk_frames, stride, num_chunks, 
         full_body_joint_count, batch_size, pre_frames, 

@@ -130,11 +130,15 @@ def main(args):
         "beat_alignment_gahr_GT": avg_gt_beat_score
     }
 
-    output_dir = Path("evaluation_metrics_results")
-    output_dir.mkdir(parents=True, exist_ok=True)
-    
-    start_time = datetime.now().strftime("%Y%m%d_%H%M")
-    output_file = output_dir / f"metrics_{project_name}_{start_time}.json"
+    if args.metrics_output:
+        output_file = Path(args.metrics_output)
+        output_dir = output_file.parent
+        output_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        output_dir = Path("evaluation_metrics_results")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        start_time = datetime.now().strftime("%Y%m%d_%H%M")
+        output_file = output_dir / f"metrics_{project_name}_{start_time}.json"
     
     with open(output_file, 'w') as f:
         json.dump(metrics, f, indent=4)
@@ -144,4 +148,5 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--results", type=str, required=True)
+    parser.add_argument("--metrics_output", type=str, default=None")
     main(parser.parse_args())

@@ -176,7 +176,11 @@ def run_batch_inference(args):
     start_time = datetime.now().strftime("%Y%m%d_%H%M")
     project_name = _stage2_runtime_cache.get('project_name', 'unknown')
     
-    output_dir = PROJECT_ROOT / "evaluation_results" / f"evaluation_{start_time}_chunks_{args.chunk_frames}_warm_start_{args.warm_start}-{project_name}"
+    if args.output_dir:
+        output_dir = Path(args.output_dir)
+    else:
+        output_dir = PROJECT_ROOT / "evaluation_results" / f"evaluation_{start_time}_chunks_{args.chunk_frames}_warm_start_{args.warm_start}-{project_name}"
+
     output_dir.mkdir(parents=True, exist_ok=True)
 
     env = lmdb.open(str(output_dir), map_size=int(1024**3 * args.max_gb))
@@ -220,6 +224,7 @@ if __name__ == "__main__":
     parser.add_argument("--stage2_checkpoint", type=str, required=True)
     parser.add_argument("--segmenter_config", type=str, required=True)
     parser.add_argument("--test_folder", type=str, required=True)
+    parser.add_argument("--output_dir", type=str, default=None)
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--top_k", type=int, default=50)
