@@ -475,7 +475,7 @@ class SeamlessSMPLHLoader(GenericLoader):
 
 
 
-def generate_interaction_video(loader1, loader2, width=1280, height=720, output_directory='cache/video_cache/interactions', progress=None, use_cache=True):
+def generate_interaction_video(loader1, loader2, width=1280, height=720, output_directory='cache/video_cache/interactions', progress=None, use_cache=True, include_audio=False):
     os.makedirs(output_directory, exist_ok=True)
     sample_name = f"{loader1.sample_name}_vs_{loader2.sample_name}"
     video_path = os.path.join(output_directory, f"{sample_name}_interaction.mp4")
@@ -528,6 +528,27 @@ def generate_interaction_video(loader1, loader2, width=1280, height=720, output_
 
     renderer.delete()
     video_writer.release()
+    
+    if loader1.meta_data.audio_file is not None and include_audio:
+        temp_video_path = video_path.replace(".mp4", "_temp.mp4")
+        
+        # Get the path to the downloaded ffmpeg binary
+        ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+        
+        # Merge audio and video using ffmpeg
+        subprocess.run([
+            ffmpeg_exe, '-y', 
+            '-i', video_path, 
+            '-i', loader1.meta_data.audio_file, 
+            '-c:v', 'libx264',     # Re-encode video to H.264
+            '-pix_fmt', 'yuv420p', # Enforce standard pixel format
+            '-c:a', 'aac',
+            temp_video_path
+        ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        # Replace the silent video with the combined file
+        os.replace(temp_video_path, video_path)
+
     return video_path
 
 def generate_reconstruction_comparison_video(loader_original, loader_reconstructed, width=1280, height=720, output_directory='cache/video_cache/reconstructions', progress=None, use_cache=True, include_audio=False):
