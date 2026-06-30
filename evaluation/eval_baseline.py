@@ -7,6 +7,7 @@ from pathlib import Path
 from tqdm import tqdm
 import evaluation.utils
 
+
 def extract_gt_from_lmdb(lmdb_path, max_clips=None):
     static_seqs, kine_seqs = [], []
     env = lmdb.open(lmdb_path, readonly=True)

@@ -1,3 +1,6 @@
+import math
+import librosa
+from scipy.signal import argrelextrema
 import numpy as np
 import scipy.linalg
 import torch
@@ -5,6 +8,8 @@ from torch import linalg
 import sys
 from data_processing.utils import get_smplh_model
 from utils import rotation_conversions as rc
+from evaluation.audio_utils import peak_pick
+librosa.util.peak_pick = peak_pick
 
 def convert_6d_to_3d(pose_6d: np.ndarray, device='cuda') -> np.ndarray:
     frames = pose_6d.shape[0]
@@ -673,3 +678,62 @@ def calculate_kid(real_activations, generated_activations):
                                          n_subsets=100)
     results = (kid_values[0].mean(), kid_values[0].std())
     return results
+
+class BeatAlignment:
+    def __init__(self, sr_audio=16000, pose_fps=30, sigma=0.1, order=2):
+        self.sr_audio = sr_audio
+        self.pose_fps = pose_fps
+        self.sigma = sigma
+        self.order = order  
+
+    def extract_audio_beats(self, wave):
+        if wave is None or len(wave) == 0:
+            return np.array([])
+            
+        oenv = librosa.onset.onset_strength(y=wave, sr=self.sr_audio)
+        S = np.abs(librosa.stft(y=wave))
+        rms = librosa.feature.rms(S=S)[0]
+        
+        onset_raw = librosa.onset.onset_detect(onset_envelope=oenv, backtrack=False)
+        if len(onset_raw) == 0:
+            return np.array([])
+            
+        onset_bt_rms = librosa.onset.onset_backtrack(onset_raw, rms)
+        audio_beat_times = librosa.frames_to_time(onset_bt_rms, sr=self.sr_audio)
+        
+        return audio_beat_times
+
+    def extract_pose_beats(self, pose_3d, joint_indices=None):
+        if len(pose_3d.shape) == 2:
+            pose_3d = pose_3d.reshape(pose_3d.shape[0], -1, 3)
+            
+        if joint_indices is not None:
+            pose_3d = pose_3d[:, joint_indices, :]
+            
+        vel = np.linalg.norm(pose_3d[1:] - pose_3d[:-1], axis=-1) 
+        kinematic_vel = np.sum(vel, axis=-1)
+        
+        beat_frames = argrelextrema(kinematic_vel, np.less, order=self.order)[0]
+        pose_beat_times = beat_frames / self.pose_fps
+        
+        return pose_beat_times
+
+    def calculate_gahr(self, audio_beats, pose_beats):
+        if len(audio_beats) == 0 or len(pose_beats) == 0:
+            return 0.0
+
+        alignment_score = 0.0
+        for a_beat in audio_beats:
+            l2_min = np.min(np.abs(pose_beats - a_beat))
+            alignment_score += math.exp(-(l2_min**2) / (2 * self.sigma**2))
+            
+        return alignment_score / len(audio_beats)
+
+    def evaluate_sequence(self, wave, pose_3d, joint_indices=None):
+        if hasattr(wave, 'cpu'):
+            wave = wave.cpu().numpy()
+            
+        audio_beats = self.extract_audio_beats(wave)
+        pose_beats = self.extract_pose_beats(pose_3d, joint_indices)
+        
+        return self.calculate_gahr(audio_beats, pose_beats)

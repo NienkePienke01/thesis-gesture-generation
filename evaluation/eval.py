@@ -25,12 +25,15 @@ import evaluation.utils
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # --- SKELETON CONFIGURATION ---
-L_SHOULDER, L_ELBOW, L_WRIST = 16, 18, 20
-R_SHOULDER, R_ELBOW, R_WRIST = 17, 19, 21
+L_SHOULDER, L_ELBOW, L_WRIST = 15, 17, 19
+R_SHOULDER, R_ELBOW, R_WRIST = 16, 18, 20
 # ------------------------------
 
 def main(args):
     env = lmdb.open(args.results, readonly=True)
+    
+    # the Beat Evaluator
+    beat_evaluator = evaluation.utils.BeatAlignment(sr_audio=16000, pose_fps=30, sigma=0.1)
     
     print("\n" + "="*40)
     print("1. EVALUATING GENERATED CLIPS FROM LMDB")
@@ -38,15 +41,35 @@ def main(args):
     
     all_pred_s_seqs, all_pred_k_seqs = [], []
     all_gt_s_seqs, all_gt_k_seqs = [], []
+    beat_scores = []
+    beat_scores_gt = []
     
     with env.begin() as txn:
-        for key, value in tqdm(txn.cursor(), desc="Extracting Frames"):
+        for key, value in tqdm(txn.cursor(), desc="Extracting Frames & Computing Metrics"):
             entry = pickle.loads(value)
             
-            pred_3d = evaluation.utils.convert_6d_to_3d(entry["motion"])
+            # Convert to 3D Joints
+            pred_3d = evaluation.utils.convert_6d_to_3d(entry["motion"]) # Shape: (frames, joints, 3)
             gt_3d = evaluation.utils.convert_6d_to_3d(entry["gt"])
 
-            dim = pred_3d.shape[-1]
+            # Calculate Beat Alignment for this sequence (Tracking Wrists)
+            if "audio" in entry and entry["audio"] is not None and len(entry["audio"]) > 0:
+                gahr_score = beat_evaluator.evaluate_sequence(
+                    wave=entry["audio"], 
+                    pose_3d=pred_3d, 
+                    joint_indices=[L_WRIST, R_WRIST]
+                )
+                beat_scores.append(gahr_score)
+
+                gahr_score_gt = beat_evaluator.evaluate_sequence(
+                    wave=entry["audio"], 
+                    pose_3d=gt_3d, 
+                    joint_indices=[L_WRIST, R_WRIST]
+                )
+                beat_scores_gt.append(gahr_score_gt)
+
+            # Format for Diversity and FD
+            dim = pred_3d.shape[-1] * pred_3d.shape[-2] if len(pred_3d.shape) == 3 else pred_3d.shape[-1]
             
             all_pred_s_seqs.append(pred_3d.reshape(-1, dim))
             all_gt_s_seqs.append(gt_3d.reshape(-1, dim))
@@ -57,6 +80,7 @@ def main(args):
     env.close()
 
     # Pooled Diversity
+    print("\nCalculating Diversity...")
     pooled_pred_s = np.vstack(all_pred_s_seqs)
     pooled_pred_k = np.vstack(all_pred_k_seqs)
 
@@ -67,9 +91,9 @@ def main(args):
     kinematic_div = float(evaluation.utils.calculate_diversity_np(pooled_pred_k, div_samples_k))
 
     # Sequence-Averaged FD
+    print("Calculating Fréchet Distances...")
     seq_fd_s, seq_fd_k = [], []
-    for i in range(len(all_pred_s_seqs)):
-        # Calculate FD between generated sequence and its corresponding GT sequence
+    for i in tqdm(range(len(all_pred_s_seqs)), desc="FD Progress"):
         mp_s, cp_s = evaluation.utils.calculate_activation_statistics_np(all_pred_s_seqs[i])
         mg_s, cg_s = evaluation.utils.calculate_activation_statistics_np(all_gt_s_seqs[i])
         seq_fd_s.append(evaluation.utils.calculate_frechet_distance_np(mp_s, cp_s, mg_s, cg_s))
@@ -80,14 +104,18 @@ def main(args):
 
     static_fd = float(np.mean(seq_fd_s))
     kinematic_fd = float(np.mean(seq_fd_k))
+    avg_beat_score = float(np.mean(beat_scores)) if beat_scores else 0.0
+    avg_gt_beat_score = float(np.mean(beat_scores_gt)) if beat_scores_gt else 0.0
     
     print("\n" + "="*40)
     print("FINAL EVALUATION METRICS")
     print("="*40)
-    print(f"Static Diversity: {static_div:.4f}")
+    print(f"Static Diversity:    {static_div:.4f}")
     print(f"Kinematic Diversity: {kinematic_div:.4f}")
-    print(f"Static FD:  {static_fd:.4f}")
-    print(f"Kinematic FD: {kinematic_fd:.4f}")
+    print(f"Static FD:           {static_fd:.4f}")
+    print(f"Kinematic FD:        {kinematic_fd:.4f}")
+    print(f"Beat Alignment GAHR: {avg_beat_score:.4f}")
+    print(f"Beat Alignment GAHR GT: {avg_gt_beat_score:.4f}")
     
     input_path = Path(args.results)
     project_name = input_path.stem.split('-')[1] if len(input_path.stem.split('-')) > 1 else "unknown"
@@ -98,6 +126,8 @@ def main(args):
         "kinematic_diversity": kinematic_div, 
         "static_FD": static_fd,
         "kinematic_FD": kinematic_fd,
+        "beat_alignment_gahr": avg_beat_score,
+        "beat_alignment_gahr_GT": avg_gt_beat_score
     }
 
     output_dir = Path("evaluation_metrics_results")
@@ -109,7 +139,7 @@ def main(args):
     with open(output_file, 'w') as f:
         json.dump(metrics, f, indent=4)
 
-    print(f"Saved evaluation metrics for '{project_name}' to {output_file}")
+    print(f"\nSaved evaluation metrics for '{project_name}' to {output_file}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
