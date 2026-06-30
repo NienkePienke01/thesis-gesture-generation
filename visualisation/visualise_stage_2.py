@@ -90,8 +90,8 @@ def load_stage2_and_stage1_pipeline(stage2_config_path, stage2_checkpoint_path, 
         return f"Status: Framework loading failure - {str(e)}"
 
 def setup_reconstruction(target_npz_path, device, load_vertices=True, max_time=None):
-    if _stage2_runtime_cache["stage1_model"] is None or _stage2_runtime_cache["stage2_model"] is None or _stage2_runtime_cache["segmenter"] is None:
-        return None, "Status: Please load the model(s) and segmenter first."
+    if _stage2_runtime_cache["segmenter"] is None:
+        return None, "Status: Please load the segmenter first."
 
     segmenter = _stage2_runtime_cache["segmenter"]
 

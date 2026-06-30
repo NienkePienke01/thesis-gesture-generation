@@ -28,65 +28,6 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 L_SHOULDER, L_ELBOW, L_WRIST = 16, 18, 20
 R_SHOULDER, R_ELBOW, R_WRIST = 17, 19, 21
 # ------------------------------
-def convert_6d_to_3d(pose_6d: np.ndarray, device='cuda') -> np.ndarray:
-    frames = pose_6d.shape[0]
-    chunk_size = 512
-    
-    # Convert to Torch Tensor and Reshape
-    pose_6d_tensor = torch.tensor(pose_6d, dtype=torch.float32, device=device).reshape(frames, 43, 6)
-    
-    # Convert 6D -> Matrix -> Axis-Angle and flatten to (frames, 129)
-    pose_axis_angle = rc.matrix_to_axis_angle(rc.rotation_6d_to_matrix(pose_6d_tensor)).reshape(frames, -1)
-
-    num_frames = pose_axis_angle.shape[0]
-    
-    # Split the 129-dim vector back into its components
-    # Indices: Body (0:39), Left Hand (39:84), Right Hand (84:129)
-    rec_body_flat = pose_axis_angle[:, :39]
-    rec_left_hand_flat = pose_axis_angle[:, 39:84]
-    rec_right_hand_flat = pose_axis_angle[:, 84:129]
-
-    # Reshape components
-    rec_body = rec_body_flat.reshape(num_frames, 13, 3)
-    left_hand = rec_left_hand_flat.reshape(num_frames, 15, 3)
-    right_hand = rec_right_hand_flat.reshape(num_frames, 15, 3)
-
-    # Create a full 21-joint body pose tensor initialized to zero
-    full_body_pose = torch.zeros((num_frames, 21, 3), device=device)
-
-    body_mask = [0, 1, 3, 4, 6, 7, 9, 10]
-    keep_indices = [i for i in range(21) if i not in body_mask]
-    eval_indices = [2, 5, 8, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20] + list(range(22, 52))
-    # eval_indices = [3, 6, 9, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21] + list(range(22, 52))
-    
-    # Map the 13 reconstructed joints back to their original skeletal indices
-    full_body_pose[:, keep_indices, :] = rec_body
-    smplh = get_smplh_model(device, gender='male')
-
-    all_joints_3d = []
-
-    for i in range(0, num_frames, chunk_size):
-        end = min(i + chunk_size, num_frames)
-        curr_batch_size = end - i
-        smplh.batch_size = curr_batch_size
-
-        # Slice the inputs specifically for the current batch and flatten the last dimension
-        current_batch = {
-            'body_pose': full_body_pose[i:end].reshape(curr_batch_size, -1),
-            'left_hand_pose': left_hand[i:end].reshape(curr_batch_size, -1),
-            'right_hand_pose': right_hand[i:end].reshape(curr_batch_size, -1),
-            'global_orient': torch.zeros((curr_batch_size, 3), device=device),
-            'transl': torch.zeros((curr_batch_size, 3), device=device),
-            'betas': smplh.betas.expand(curr_batch_size, -1),
-            'rot2pose': True
-        }
-
-        with torch.no_grad():
-            output = smplh(**current_batch)
-            joints_3d = output.joints[:, eval_indices, :]
-            all_joints_3d.append(joints_3d.cpu().numpy())
-        
-    return np.concatenate(all_joints_3d, axis=0).reshape(frames, -1)
 
 def calculate_gt_baselines(env, is_warm_start):
     all_gt_static_frames, all_gt_kine_frames = [], []
@@ -99,10 +40,7 @@ def calculate_gt_baselines(env, is_warm_start):
     with env.begin() as txn:
         for key, value in tqdm(txn.cursor(), desc="Extracting GT Frames"):
             entry = pickle.loads(value)
-            gt_3d = convert_6d_to_3d(entry["gt"])
-            
-            if is_warm_start:
-                gt_3d = gt_3d[64:]
+            gt_3d = evaluation.utils.convert_6d_to_3d(entry["gt"])
                 
             feature_dim = gt_3d.shape[-1]
             gt_s = gt_3d.reshape(-1, feature_dim)
@@ -162,8 +100,8 @@ def main(args):
         for key, value in tqdm(txn.cursor(), desc="Extracting Generated Frames"):
             entry = pickle.loads(value)
             
-            pred_3d = convert_6d_to_3d(entry["motion"])
-            gt_3d = convert_6d_to_3d(entry["gt"])
+            pred_3d = evaluation.utils.convert_6d_to_3d(entry["motion"])
+            gt_3d = evaluation.utils.convert_6d_to_3d(entry["gt"])
             
             if is_warm_start:
                 pred_3d = pred_3d[64:]
