@@ -89,156 +89,150 @@ def convert_6d_to_3d(pose_6d: np.ndarray, device='cuda') -> np.ndarray:
     return np.concatenate(all_joints_3d, axis=0).reshape(frames, -1)
 
 def calculate_gt_baselines(env, is_warm_start):
-    all_gt_static, all_gt_kine = [], []
-    seq_mu_s, seq_cov_s, seq_mu_k, seq_cov_k = [], [], [], []
-
+    all_gt_static_frames, all_gt_kine_frames = [], []
+    clip_static_list, clip_kine_list = [], []
+    
     print("\n" + "="*40)
-    print("0. CALCULATING GROUND TRUTH BASELINES")
+    print("0. CALCULATING GROUND TRUTH BASELINES (POOLED)")
     print("="*40)
-
+    
     with env.begin() as txn:
-        for key, value in tqdm(txn.cursor(), desc="Extracting GT"):
+        for key, value in tqdm(txn.cursor(), desc="Extracting GT Frames"):
             entry = pickle.loads(value)
-            gt = convert_6d_to_3d(entry["gt"])
+            gt_3d = convert_6d_to_3d(entry["gt"])
+            
             if is_warm_start:
-                gt = gt[64:]
+                gt_3d = gt_3d[64:]
                 
-            dim = gt.shape[-1]
-            gt_s = gt.reshape(-1, dim)
-            gt_k = (gt[1:] - gt[:-1]).reshape(-1, dim)
+            feature_dim = gt_3d.shape[-1]
+            gt_s = gt_3d.reshape(-1, feature_dim)
+            gt_k = (gt_3d[1:, :] - gt_3d[:-1, :]).reshape(-1, feature_dim)
             
-            all_gt_static.append(gt_s)
-            all_gt_kine.append(gt_k)
-            
-            m_s, c_s = evaluation.utils.calculate_activation_statistics_np(gt_s)
-            m_k, c_k = evaluation.utils.calculate_activation_statistics_np(gt_k)
-            seq_mu_s.append((m_s, c_s))
-            seq_mu_k.append((m_k, c_k))
+            all_gt_static_frames.append(gt_s)
+            all_gt_kine_frames.append(gt_k)
+            clip_static_list.append(gt_s)
+            clip_kine_list.append(gt_k)
 
-    indices = list(range(len(seq_mu_s)))
-    rand_idx = indices.copy()
-    while any(i == j for i, j in zip(indices, rand_idx)): 
-        random.shuffle(rand_idx)
+    pooled_gt_static = np.vstack(all_gt_static_frames)
+    pooled_gt_kine = np.vstack(all_gt_kine_frames)
     
-    seq_fd_s = [evaluation.utils.calculate_frechet_distance_np(seq_mu_s[i][0], seq_mu_s[i][1], seq_mu_s[j][0], seq_mu_s[j][1]) for i, j in zip(indices, rand_idx)]
-    seq_fd_k = [evaluation.utils.calculate_frechet_distance_np(seq_mu_k[i][0], seq_mu_k[i][1], seq_mu_k[j][0], seq_mu_k[j][1]) for i, j in zip(indices, rand_idx)]
-
-    pool_s = np.vstack(all_gt_static)
-    pool_k = np.vstack(all_gt_kine)
+    div_samples_g = min(10000, pooled_gt_static.shape[0])
+    div_samples_k = min(10000, pooled_gt_kine.shape[0])
     
-    idx_s = np.random.permutation(len(pool_s))
-    idx_k = np.random.permutation(len(pool_k))
+    static_gt_div = float(evaluation.utils.calculate_diversity_np(pooled_gt_static, div_samples_g))
+    kine_gt_div = float(evaluation.utils.calculate_diversity_np(pooled_gt_kine, div_samples_k))
+
+    num_clips = len(clip_static_list)
+    random_indices = np.random.choice(num_clips, size=num_clips, replace=True)
+
+    random_gt_static = np.vstack([clip_static_list[i] for i in random_indices])
+    random_gt_kine = np.vstack([clip_kine_list[i] for i in random_indices])
+
+    mu1_s, cov1_s = evaluation.utils.calculate_activation_statistics_np(pooled_gt_static)
+    mu2_s, cov2_s = evaluation.utils.calculate_activation_statistics_np(random_gt_static)
+    static_gt_random_fd = float(evaluation.utils.calculate_frechet_distance_np(mu1_s, cov1_s, mu2_s, cov2_s))
+
+    mu1_k, cov1_k = evaluation.utils.calculate_activation_statistics_np(pooled_gt_kine)
+    mu2_k, cov2_k = evaluation.utils.calculate_activation_statistics_np(random_gt_kine)
+    kine_gt_random_fd = float(evaluation.utils.calculate_frechet_distance_np(mu1_k, cov1_k, mu2_k, cov2_k))
+
+    print(f"GT Diversity (Static): {static_gt_div:.4f}")
+    print(f"GT Random FD (Static) [x10^3 Scale]: {static_gt_random_fd * 1000:.4f}")
+    print(f"GT Diversity (Kinematic): {kine_gt_div:.4f}")
+    print(f"GT Random FD (Kinematic) [x10^3 Scale]: {kine_gt_random_fd * 1000:.4f}")
     
-    pm1_s, pc1_s = evaluation.utils.calculate_activation_statistics_np(pool_s[idx_s[:len(idx_s)//2]])
-    pm2_s, pc2_s = evaluation.utils.calculate_activation_statistics_np(pool_s[idx_s[len(idx_s)//2:]])
-    pool_fd_s = evaluation.utils.calculate_frechet_distance_np(pm1_s, pc1_s, pm2_s, pc2_s)
+    return static_gt_div, static_gt_random_fd, kine_gt_div, kine_gt_random_fd
 
-    pm1_k, pc1_k = evaluation.utils.calculate_activation_statistics_np(pool_k[idx_k[:len(idx_k)//2]])
-    pm2_k, pc2_k = evaluation.utils.calculate_activation_statistics_np(pool_k[idx_k[len(idx_k)//2:]])
-    pool_fd_k = evaluation.utils.calculate_frechet_distance_np(pm1_k, pc1_k, pm2_k, pc2_k)
-
-    print(f"DyaDiT (Seq-Avg) -> GT Random FD (Static): {np.mean(seq_fd_s):.4f} | (Kinematic): {np.mean(seq_fd_k):.4f}")
-    print(f"DyaPlex (Pooled) -> GT Random FD (Static) [x10^-3]: {pool_fd_s * 1000:.4f} | (Kinematic) [x10^-3]: {pool_fd_k * 1000:.4f}")
-
-    return np.mean(seq_fd_s), np.mean(seq_fd_k), pool_fd_s, pool_fd_k
 
 def main(args):
     env = lmdb.open(args.results, readonly=True)
     is_warm_start = "warm_start_True" in args.results
     print(f"Detected warm_start parameter: {is_warm_start}")
     
-    seq_s_fd, seq_k_fd, pool_s_fd, pool_k_fd = calculate_gt_baselines(env, is_warm_start) 
+    static_gt_div, static_gt_random_fd, kine_gt_div, kine_gt_random_fd = calculate_gt_baselines(env, is_warm_start) 
     
     print("\n" + "="*40)
-    print("1. EVALUATING GENERATED CLIPS")
+    print("1. EVALUATING CLIPS FROM LMDB (POOLED)")
     print("="*40)
     
-    all_pred_s, all_gt_s = [], []
-    all_pred_k, all_gt_k = [], []
-    seq_pred_fd_s, seq_pred_fd_k = [], []
-    seq_div_s, seq_div_k = [], []
+    all_pred_static, all_gt_static = [], []
+    all_pred_kine, all_gt_kine = [], []
     
     with env.begin() as txn:
-        for key, value in tqdm(txn.cursor(), desc="Evaluating"):
+        for key, value in tqdm(txn.cursor(), desc="Extracting Generated Frames"):
             entry = pickle.loads(value)
             
-            pred = convert_6d_to_3d(entry["motion"])
-            gt = convert_6d_to_3d(entry["gt"])
+            pred_3d = convert_6d_to_3d(entry["motion"])
+            gt_3d = convert_6d_to_3d(entry["gt"])
             
             if is_warm_start:
-                pred = pred[64:]
-                gt = gt[64:]
+                pred_3d = pred_3d[64:]
+                gt_3d = gt_3d[64:]
 
-            dim = pred.shape[-1]
-            pred_s, gt_s = pred.reshape(-1, dim), gt.reshape(-1, dim)
-            pred_k, gt_k = (pred[1:] - pred[:-1]).reshape(-1, dim), (gt[1:] - gt[:-1]).reshape(-1, dim)
+            feature_dim = pred_3d.shape[-1]
             
-            all_pred_s.append(pred_s); all_gt_s.append(gt_s)
-            all_pred_k.append(pred_k); all_gt_k.append(gt_k)
+            all_pred_static.append(pred_3d.reshape(-1, feature_dim))
+            all_gt_static.append(gt_3d.reshape(-1, feature_dim))
             
-            # Seq-Averaged Metrics (DyaDiT style)
-            mp_s, cp_s = evaluation.utils.calculate_activation_statistics_np(pred_s)
-            mg_s, cg_s = evaluation.utils.calculate_activation_statistics_np(gt_s)
-            seq_pred_fd_s.append(evaluation.utils.calculate_frechet_distance_np(mp_s, cp_s, mg_s, cg_s))
-            
-            mp_k, cp_k = evaluation.utils.calculate_activation_statistics_np(pred_k)
-            mg_k, cg_k = evaluation.utils.calculate_activation_statistics_np(gt_k)
-            seq_pred_fd_k.append(evaluation.utils.calculate_frechet_distance_np(mp_k, cp_k, mg_k, cg_k))
-            
-            if pred_s.shape[0] > 1:
-                seq_div_s.append(evaluation.utils.calculate_diversity_np(pred_s, min(10000, pred_s.shape[0]-1)))
-                seq_div_k.append(evaluation.utils.calculate_diversity_np(pred_k, min(10000, pred_k.shape[0]-1)))
+            all_pred_kine.append((pred_3d[1:, :] - pred_3d[:-1, :]).reshape(-1, feature_dim))
+            all_gt_kine.append((gt_3d[1:, :] - gt_3d[:-1, :]).reshape(-1, feature_dim))
             
     env.close()
 
-    # Pooled Metrics (DyaPlex style)
-    p_pred_s, p_gt_s = np.vstack(all_pred_s), np.vstack(all_gt_s)
-    p_pred_k, p_gt_k = np.vstack(all_pred_k), np.vstack(all_gt_k)
+    pooled_pred_static = np.vstack(all_pred_static)
+    pooled_gt_static = np.vstack(all_gt_static)
+    pooled_pred_kine = np.vstack(all_pred_kine)
+    pooled_gt_kine = np.vstack(all_gt_kine)
 
-    m1_s, c1_s = evaluation.utils.calculate_activation_statistics_np(p_pred_s)
-    m2_s, c2_s = evaluation.utils.calculate_activation_statistics_np(p_gt_s)
-    pool_pred_fd_s = evaluation.utils.calculate_frechet_distance_np(m1_s, c1_s, m2_s, c2_s)
+    div_samples_g = min(10000, pooled_pred_static.shape[0])
+    div_samples_k = min(10000, pooled_pred_kine.shape[0])
 
-    m1_k, c1_k = evaluation.utils.calculate_activation_statistics_np(p_pred_k)
-    m2_k, c2_k = evaluation.utils.calculate_activation_statistics_np(p_gt_k)
-    pool_pred_fd_k = evaluation.utils.calculate_frechet_distance_np(m1_k, c1_k, m2_k, c2_k)
+    static_div = float(evaluation.utils.calculate_diversity_np(pooled_pred_static, div_samples_g))
+    kinematic_div = float(evaluation.utils.calculate_diversity_np(pooled_pred_kine, div_samples_k))
 
-    pool_div_s = evaluation.utils.calculate_diversity_np(p_pred_s, min(10000, p_pred_s.shape[0]))
-    pool_div_k = evaluation.utils.calculate_diversity_np(p_pred_k, min(10000, p_pred_k.shape[0]))
+    mu_pred_static, cov_pred_static = evaluation.utils.calculate_activation_statistics_np(pooled_pred_static)
+    mu_gt_static, cov_gt_static = evaluation.utils.calculate_activation_statistics_np(pooled_gt_static)
+    static_fd = float(evaluation.utils.calculate_frechet_distance_np(mu_pred_static, cov_pred_static, mu_gt_static, cov_gt_static))
+
+    mu_pred_kine, cov_pred_kine = evaluation.utils.calculate_activation_statistics_np(pooled_pred_kine)
+    mu_gt_kine, cov_gt_kine = evaluation.utils.calculate_activation_statistics_np(pooled_gt_kine)
+    kinematic_fd = float(evaluation.utils.calculate_frechet_distance_np(mu_pred_kine, cov_pred_kine, mu_gt_kine, cov_gt_kine))
     
     print("\n" + "="*40)
     print("2. FINAL EVALUATION METRICS")
     print("="*40)
     
-    print("--- DyaDiT Style (Sequence Averaged) ---")
-    print(f"Static Diversity: {np.mean(seq_div_s):.4f} | Kinematic Diversity: {np.mean(seq_div_k):.4f}")
-    print(f"Static FD: {np.mean(seq_pred_fd_s):.4f} | Kinematic FD: {np.mean(seq_pred_fd_k):.4f}")
-    
-    print("\n--- DyaPlex Style (Pooled) [x10^-3 Scale] ---")
-    print(f"Static Diversity: {pool_div_s:.4f} | Kinematic Diversity: {pool_div_k:.4f}")
-    print(f"Static FD: {pool_pred_fd_s * 1000:.4f} | Kinematic FD: {pool_pred_fd_k * 1000:.4f}")
+    print(f"Static Diversity: {static_div:.4f}")
+    # Applying the 1000 multiplier to match the papers' tables
+    print(f"Static FD [x10^3 Scale]: {static_fd * 1000:.4f}")
+    print(f"Kinematic Diversity: {kinematic_div:.4f}")
+    print(f"Kinematic FD [x10^3 Scale]: {kinematic_fd * 1000:.4f}")
     
     input_path = Path(args.results)
     project_name = input_path.stem.split('-')[1] if len(input_path.stem.split('-')) > 1 else "unknown"
 
     metrics = {
         "project_name": project_name,
-        "dyadit_static_div": float(np.mean(seq_div_s)),
-        "dyadit_kine_div": float(np.mean(seq_div_k)),
-        "dyadit_static_fd": float(np.mean(seq_pred_fd_s)),
-        "dyadit_kine_fd": float(np.mean(seq_pred_fd_k)),
-        "dyaplex_static_div": float(pool_div_s),
-        "dyaplex_kine_div": float(pool_div_k),
-        "dyaplex_static_fd": float(pool_pred_fd_s * 1000),
-        "dyaplex_kine_fd": float(pool_pred_fd_k * 1000)
+        "static_diversity": static_div,
+        "kinematic_diversity": kinematic_div, 
+        "static_FD": static_fd * 1000,
+        "kinematic_FD": kinematic_fd * 1000,
+        "static GT diversity": static_gt_div, 
+        "static GT FD": static_gt_random_fd * 1000, 
+        "Kinematic GT diversity": kine_gt_div,
+        "Kinematic GT FD": kine_gt_random_fd * 1000
     }
 
     output_dir = Path("evaluation_metrics_results")
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_file = output_dir / f"metrics_{project_name}_{datetime.now().strftime('%Y%m%d_%H%M')}.json"
+    
+    start_time = datetime.now().strftime("%Y%m%d_%H%M")
+    output_file = output_dir / f"metrics_{project_name}_{start_time}.json"
     
     with open(output_file, 'w') as f:
         json.dump(metrics, f, indent=4)
+
+    print(f"Saved evaluation metrics for '{project_name}' to {output_file}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
