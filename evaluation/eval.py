@@ -148,5 +148,5 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--results", type=str, required=True)
-    parser.add_argument("--metrics_output", type=str, default=None")
+    parser.add_argument("--metrics_output", type=str, default=None)
     main(parser.parse_args())
