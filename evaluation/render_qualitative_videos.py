@@ -14,7 +14,6 @@ from utils import rotation_conversions as rc
 # Import generation and visualization tools
 from visualisation.visualise_stage_2 import (
     load_stage2_and_stage1_pipeline, 
-    reconstruct_and_render, 
     setup_reconstruction, 
     generate_motion_sequence, 
     _stage2_runtime_cache
@@ -83,7 +82,9 @@ def generate_person_loader(npz_path, args):
     reconstructed_matrix = rc.rotation_6d_to_matrix(final_6d_pose)
     final_reconstructed_pose = rc.matrix_to_axis_angle(reconstructed_matrix).reshape(valid_frames, -1)
 
-    generated_loader = original_loader.overwrite_with_reconstructed_pose(final_reconstructed_pose)
+    # Re-initialize a loader and overwrite the pose
+    generated_loader = utils.SeamlessSMPLHLoader(npz_path, device=device, with_meta_data=True)
+    generated_loader.overwrite_with_reconstructed_pose(final_reconstructed_pose)
     
     return generated_loader
 
@@ -101,14 +102,20 @@ def main(args):
         print("Error: No file IDs provided! Use --file_ids or --file_ids_txt.")
         return
 
-    # Prepare output directory
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    # Prepare Output Directories
+    base_output_dir = Path(args.output_dir)
+    dir_comparison = base_output_dir / "comparison"
+    dir_dyadic_gt = base_output_dir / "dyadic_gt"
+    dir_dyadic_gen = base_output_dir / "dyadic_generated"
+    
+    for d in [dir_comparison, dir_dyadic_gt, dir_dyadic_gen]:
+        d.mkdir(parents=True, exist_ok=True)
 
     print(f"\n>>> Loading dataset from {args.data_folder}...")
     dataset = SeamlessDataset(args.data_folder, file_ids=file_ids)
     print(f"Successfully mapped {len(dataset.samples)} out of {len(file_ids)} requested IDs.")
 
+    # Initialize Models
     print("\n>>> Initializing Stage 2 and Stage 1 Pipeline...")
     status = load_stage2_and_stage1_pipeline(
         args.stage2_config, 
@@ -120,117 +127,77 @@ def main(args):
 
     # Inference & Rendering Loop
     print("\n" + "="*50)
-    print(f"STARTING BATCH VIDEO RENDERING (Mode: {args.mode.upper()})")
+    print("STARTING OMNI-BATCH VIDEO RENDERING (All 3 Types)")
     print("="*50)
     
     success_count = 0
     for file_id in tqdm(dataset.file_ids, desc="Processing Sequences"):
-        npz_path = str(dataset.samples.get(file_id))
-        
-        if not npz_path or not os.path.exists(npz_path):
-            print(f"\nWarning: {file_id} not found on disk. Skipping.")
-            continue
-            
         try:
-            video_path = None
-            msg = ""
+            print(f"\n--- Processing {file_id} ---")
+            loader_args = {'device': args.device, 'load_vertices': True, 'with_meta_data': True}
+            loader_1_gt, loader_2_gt = dataset.get_interaction_pair(file_id, loader_args)
 
-            if args.mode == "comparison":
-                # Person A: Ground Truth vs Generated side-by-side
-                video_path, msg = reconstruct_and_render(
-                    target_npz_file=npz_path, 
-                    device=args.device, 
-                    top_k=args.top_k, 
-                    top_p=args.top_p, 
-                    temperature=args.temperature, 
-                    warm_start=args.warm_start, 
-                    progress=dummy_progress
-                )
-                
-            elif args.mode == "dyadic_gt":
-                # Generated Person A vs Ground Truth Person B
-                loader_args = {'device': args.device, 'load_vertices': True, 'with_meta_data': True}
-                loader_1_gt, loader_2_gt = dataset.get_interaction_pair(file_id, loader_args)
-                
-                if loader_2_gt is None:
-                    msg = "Partner data not found. Cannot render a dyadic interaction."
-                else:
-                    # Generate Person A
-                    print(f"\nGenerating Person A ({loader_1_gt.sample_name})...")
-                    loader_1_gen = generate_person_loader(loader_1_gt.npz_path, args)
-                    
-                    # We DO NOT generate Person B. We keep loader_2_gt as the ground truth.
-                    print(f"Using Ground Truth for Person B ({loader_2_gt.sample_name})...")
-                    
-                    # Render the generated avatar facing the real human
-                    print("Rendering hybrid interaction video...")
-                    video_path = utils.generate_interaction_video(
-                        loader_1_gen, loader_2_gt, progress=dummy_progress, use_cache=False, include_audio=True
-                    )
-                    msg = "Generated vs GT Dyadic interaction rendered successfully."
+            if loader_1_gt is None:
+                print(f"Warning: Primary file {file_id} not found on disk. Skipping.")
+                continue
 
-            elif args.mode == "dyadic_generated":
-                # Generated Dyad: AI Person A vs AI Person B
-                loader_args = {'device': args.device, 'load_vertices': False, 'with_meta_data': True}
-                loader_1_gt, loader_2_gt = dataset.get_interaction_pair(file_id, loader_args)
+            # GENERATE PERSON A
+            print("1/5 Generating Person A...")
+            loader_1_gen = generate_person_loader(loader_1_gt.npz_path, args)
+            torch.cuda.empty_cache()
 
-                if loader_2_gt is None:
-                    msg = "Partner data not found. Cannot generate a dyadic interaction."
-                else:
-                    # Generate Person A
-                    print(f"\nGenerating Person A ({loader_1_gt.sample_name})...")
-                    loader_1_gen = generate_person_loader(loader_1_gt.npz_path, args)
-                    torch.cuda.empty_cache() # Clear VRAM safely between passes
-                    
-                    # Generate Person B
-                    print(f"Generating Person B ({loader_2_gt.sample_name})...")
-                    loader_2_gen = generate_person_loader(loader_2_gt.npz_path, args)
-                    torch.cuda.empty_cache()
-                    
-                    # Render them facing each other
-                    print("Rendering full AI interaction video...")
-                    video_path = utils.generate_interaction_video(
-                        loader_1_gen, loader_2_gen, progress=dummy_progress, use_cache=False, include_audio=True
-                    )
-                    msg = "Generated Dyadic interaction rendered successfully."
-            
-            # File Management
-            if video_path and isinstance(video_path, str) and os.path.exists(video_path):
-                suffix_map = {
-                    "comparison": "_comparison.mp4",
-                    "dyadic_gt": "_hybrid_dyadic.mp4",
-                    "dyadic_generated": "_ai_dyadic.mp4"
-                }
-                final_dest = output_dir / f"{file_id}{suffix_map[args.mode]}"
-                shutil.copy(video_path, final_dest)
+            # RENDER COMPARISON (Person A GT vs Gen)
+            print("2/5 Rendering Comparison Video...")
+            comp_path = utils.generate_reconstruction_comparison_video(
+                loader_1_gt, loader_1_gen, progress=dummy_progress, use_cache=False, include_audio=True
+            )
+            shutil.copy(comp_path, dir_comparison / f"{file_id}_comparison.mp4")
+
+            # Check if there is a partner to do dyadic interactions with
+            if loader_2_gt is None:
+                print("Partner data not found! Skipping Dyadic renders for this interaction.")
                 success_count += 1
-            else:
-                print(f"\nFailed to generate video for {file_id}. Message: {msg}")
+                continue
+
+            # RENDER HYBRID DYADIC (Gen Person A vs GT Person B)
+            print("3/5 Rendering Hybrid Dyadic Video (Gen A vs GT B)...")
+            hybrid_path = utils.generate_interaction_video(
+                loader_1_gen, loader_2_gt, progress=dummy_progress, use_cache=False
+            )
+            shutil.copy(hybrid_path, dir_dyadic_gt / f"{file_id}_hybrid_dyadic.mp4")
+
+            # GENERATE PERSON B
+            print("4/5 Generating Person B...")
+            loader_2_gen = generate_person_loader(loader_2_gt.npz_path, args)
+            torch.cuda.empty_cache()
+
+            # RENDER FULL AI DYADIC (Gen Person A vs Gen Person B)
+            print("5/5 Rendering Full AI Dyadic Video (Gen A vs Gen B)...")
+            ai_path = utils.generate_interaction_video(
+                loader_1_gen, loader_2_gen, progress=dummy_progress, use_cache=False
+            )
+            shutil.copy(ai_path, dir_dyadic_gen / f"{file_id}_ai_dyadic.mp4")
+            
+            success_count += 1
+            print(f"Successfully finished all renders for {file_id}")
                 
         except Exception as e:
             print(f"\nException occurred while processing {file_id}: {str(e)}")
 
     print("\n" + "="*50)
-    print(f"FINISHED! Successfully rendered {success_count}/{len(dataset.samples)} videos.")
-    print(f"Videos saved to: {output_dir.absolute()}")
+    print(f"FINISHED! Successfully processed {success_count}/{len(dataset.samples)} interactions.")
+    print(f"Check the folders inside: {base_output_dir.absolute()}")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Batch render qualitative comparison and dyadic videos.")
+    parser = argparse.ArgumentParser(description="Batch render all qualitative analysis videos (Comparison, Hybrid Dyad, Full AI Dyad).")
     
-    # Run Mode
-    parser.add_argument("--mode", type=str, choices=["comparison", "dyadic_gt", "dyadic_generated"], 
-                        default="comparison", 
-                        help="comparison: GT Person A vs Gen Person A. dyadic_gt: Gen Person A vs GT Person B. dyadic_generated: Gen Person A vs Gen Person B.")
-
-
     parser.add_argument("--stage2_config", type=str, required=True)
     parser.add_argument("--stage2_checkpoint", type=str, required=True)
     parser.add_argument("--segmenter_config", type=str, required=True)
     parser.add_argument("--data_folder", type=str, required=True, help="Root folder of the Seamless dataset")
-    parser.add_argument("--output_dir", type=str, default="qualitative_renders", help="Where to save the final MP4s")
+    parser.add_argument("--output_dir", type=str, default="qualitative_renders", help="Base directory to save the 3 video folders")
     
-
     parser.add_argument("--file_ids", type=str, nargs='+', help="List of specific file IDs to render (space separated)")
     parser.add_argument("--file_ids_txt", type=str, help="Path to a .txt file containing one file ID per line")
     
@@ -238,6 +205,6 @@ if __name__ == "__main__":
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--top_k", type=int, default=50)
     parser.add_argument("--top_p", type=float, default=0.90)
-    parser.add_argument("--warm_start", action="store_true", help="Seed generation with ground truth context")
+    parser.add_argument("--warm_start", action="store_true")
     
     main(parser.parse_args())
