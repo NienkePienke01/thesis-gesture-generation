@@ -259,6 +259,7 @@ def main():
         args.evaluation = SimpleNamespace(**config_dict["evaluation"])
 
     args.model_params = SimpleNamespace(**config_dict["model_params"])
+    args.config_path = config_path
 
     gpu_amount_size = len(args.gpus)
     if gpu_amount_size > 1:
