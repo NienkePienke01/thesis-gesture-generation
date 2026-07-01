@@ -83,8 +83,7 @@ def generate_person_loader(npz_path, args):
     reconstructed_matrix = rc.rotation_6d_to_matrix(final_6d_pose)
     final_reconstructed_pose = rc.matrix_to_axis_angle(reconstructed_matrix).reshape(valid_frames, -1)
 
-    generated_loader = utils.SeamlessSMPLHLoader(npz_path, device=device)
-    generated_loader.overwrite_with_reconstructed_pose(final_reconstructed_pose)
+    generated_loader = original_loader.overwrite_with_reconstructed_pose(final_reconstructed_pose)
     
     return generated_loader
 
