@@ -4,7 +4,7 @@
     "gpus": [0, 1, 2, 3],
     "workers_per_gpu": 4,
     "periodic_backup_after_x_epochs": 10,
-    "log_period": 10,
+    "log_period": 1,
 
     "stage_1_pretrain": {
         "config_path": "configs/stage1_new_dyadit_model_attempt.json",
@@ -35,7 +35,7 @@
 
     "training_params": {
         "batch_size": 32,
-        "epochs": 20,
+        "epochs": 3,
         "lr_base": 0.0003,
         "warmup_epochs": 5,
         "decay_epochs": 150,
