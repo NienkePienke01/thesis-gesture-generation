@@ -175,6 +175,7 @@ def train_model(rank, gpu_amount_size, shared_port, args):
                 # Set the paths we want the child scripts to use
                 explicit_lmdb_path = PROJECT_ROOT / "evaluation_results" / f"eval_auto_{args.project}_chunk_{chunk}_{eval_timestamp}"
                 explicit_metrics_path = PROJECT_ROOT / "evaluation_metrics_results" / f"metrics_auto_{args.project}_chunk_{chunk}_{eval_timestamp}.json"
+                explicit_video_render_path = PROJECT_ROOT / "qualitative_renders" / f"eval_auto_{args.project}_{eval_timestamp}"
                 infer_cmd_prefix = getattr(eval_args, "infer_cmd_prefix", ["python"])
 
                 # Run Inference
@@ -199,7 +200,7 @@ def train_model(rank, gpu_amount_size, shared_port, args):
                     "--metrics_output", str(explicit_metrics_path)
                 ]
                 subprocess.run(eval_cmd, check=True)
-                
+
                 # Parse and Log to WandB
                 if explicit_metrics_path.exists():
                     with open(explicit_metrics_path, 'r') as f:
@@ -210,6 +211,21 @@ def train_model(rank, gpu_amount_size, shared_port, args):
                     print(f"Successfully logged metrics for {chunk} frames to WandB!")
                 else:
                     print(f"Error: Expected metrics file at {explicit_metrics_path} but it was not found.")
+
+            print(f"\n>>> Generating videos for {explicit_video_render_path.name}")
+
+            infer_videos_prefix = getattr(eval_args, "infer_videos_prefix", ["python"])
+            infer_videos_cmd = infer_videos_prefix + [
+                "--stage2_config", args.config_path,
+                "--stage2_checkpoint", str(final_ckpt_path),
+                "--segmenter_config", eval_args.segmenter_config,
+                "--data_folder", eval_args.test_folder,
+                "--output_dir", str(explicit_video_render_path),
+                "--warm_start",
+                "--file_ids_txt", "evaluation/file_list_videos.txt",
+                "--device", "cuda"
+            ]
+            subprocess.run(infer_videos_cmd, check=True)
 
         wandb.finish()
 

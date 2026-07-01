@@ -33,6 +33,7 @@ cache/gradio_tmp/
 
 evaluation_metrics_results/
 evaluation_results/
+qualitative_renders/
 
 # Ignore checkpoints
 checkpoints/*.bin

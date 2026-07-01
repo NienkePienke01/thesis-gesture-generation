@@ -1,5 +1,5 @@
 {
-    "project": "stage_2_model_all_data",
+    "project": "stage_2_model_training_loop_test",
     "device": "cuda",
     "gpus": [0, 1, 2, 3],
     "workers_per_gpu": 4,
@@ -35,7 +35,7 @@
 
     "training_params": {
         "batch_size": 32,
-        "epochs": 200,
+        "epochs": 20,
         "lr_base": 0.0003,
         "warmup_epochs": 5,
         "decay_epochs": 150,
@@ -58,6 +58,7 @@
         "chunk_frames": [300, 900],
         "max_gb": 100,
         "eval_cmd_prefix": ["env", "-u", "PYTHONPATH", "-u", "PYTHONHOME", "uv", "run", "python", "-m", "evaluation.eval"],
-        "infer_cmd_prefix": ["env", "-u", "PYTHONPATH", "-u", "PYTHONHOME", "uv", "run", "python", "-m", "evaluation.get_stage_2_results"]
+        "infer_cmd_prefix": ["env", "-u", "PYTHONPATH", "-u", "PYTHONHOME", "uv", "run", "python", "-m", "evaluation.get_stage_2_results"],
+        "infer_videos_prefix": ["env", "-u", "PYTHONPATH", "-u", "PYTHONHOME", "uv", "run", "python", "-m", "evaluation.render_qualitative_videos"]
     }
 }
