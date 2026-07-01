@@ -198,7 +198,8 @@ def train_model(rank, gpu_amount_size, shared_port, args):
                 # Run Evaluation
                 eval_cmd = eval_cmd_prefix + [
                     "--results", str(explicit_lmdb_path),
-                    "--metrics_output", str(explicit_metrics_path)
+                    "--metrics_output", str(explicit_metrics_path),
+                    "--project_name", str(args.project)
                 ]
                 subprocess.run(eval_cmd, check=True)
 

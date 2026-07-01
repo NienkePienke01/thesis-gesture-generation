@@ -31,6 +31,7 @@ R_SHOULDER, R_ELBOW, R_WRIST = 16, 18, 20
 
 def main(args):
     env = lmdb.open(args.results, readonly=True)
+    project_name = args.project_name
     
     # the Beat Evaluator
     beat_evaluator = evaluation.utils.BeatAlignment(sr_audio=16000, pose_fps=30, sigma=0.1)
@@ -118,7 +119,6 @@ def main(args):
     print(f"Beat Alignment GAHR GT: {avg_gt_beat_score:.4f}")
     
     input_path = Path(args.results)
-    project_name = input_path.stem.split('-')[1] if len(input_path.stem.split('-')) > 1 else "unknown"
 
     metrics = {
         "project_name": project_name,
@@ -149,4 +149,5 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--results", type=str, required=True)
     parser.add_argument("--metrics_output", type=str, default=None)
+    parser.add_argument("--project_name", type=str, default="unknown_project")
     main(parser.parse_args())

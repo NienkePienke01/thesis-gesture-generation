@@ -127,7 +127,7 @@ def main(args):
 
     # Inference & Rendering Loop
     print("\n" + "="*50)
-    print("STARTING OMNI-BATCH VIDEO RENDERING (All 3 Types)")
+    print("STARTING BATCH VIDEO RENDERING (All 3 Types)")
     print("="*50)
     
     success_count = 0
