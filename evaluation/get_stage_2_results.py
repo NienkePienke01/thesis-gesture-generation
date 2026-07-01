@@ -186,7 +186,12 @@ def run_batch_inference(args):
     env = lmdb.open(str(output_dir), map_size=int(1024**3 * args.max_gb))
     sample_idx = 0
 
-    for file_id in tqdm(dataset.file_ids, desc="Generating Gestures"):
+    file_ids_to_process = dataset.file_ids
+    if args.max_interactions is not None:
+        file_ids_to_process = file_ids_to_process[:args.max_interactions]
+        print(f"Limiting processing to the first {len(file_ids_to_process)} files.")
+
+    for file_id in tqdm(file_ids_to_process, desc="Generating Gestures"):
         file_path = dataset.samples.get(file_id)
         if not file_path:
             print(f"Warning: {file_id} missing from mapped samples, skipping.")
@@ -232,5 +237,6 @@ if __name__ == "__main__":
     parser.add_argument("--warm_start", action="store_true")
     parser.add_argument("--max_gb", type=int, default=2) 
     parser.add_argument("--chunk_frames", type=int, default=300) 
+    parser.add_argument("--max_interactions", type=int, default=None, help="Maximum number of interaction files to process.")
     
     run_batch_inference(parser.parse_args())
