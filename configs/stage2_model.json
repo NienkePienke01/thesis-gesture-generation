@@ -59,6 +59,7 @@
         "max_gb": 100,
         "eval_cmd_prefix": ["env", "-u", "PYTHONPATH", "-u", "PYTHONHOME", "uv", "run", "python", "-m", "evaluation.eval"],
         "infer_cmd_prefix": ["env", "-u", "PYTHONPATH", "-u", "PYTHONHOME", "uv", "run", "python", "-m", "evaluation.get_stage_2_results"],
-        "infer_videos_prefix": ["env", "-u", "PYTHONPATH", "-u", "PYTHONHOME", "uv", "run", "python", "-m", "evaluation.render_qualitative_videos"]
+        "infer_videos_prefix": ["env", "-u", "PYTHONPATH", "-u", "PYTHONHOME", "uv", "run", "python", "-m", "evaluation.render_qualitative_videos"],
+        "file_ids": "evaluation/file_list_videos.txt"
     }
 }
