@@ -144,6 +144,10 @@ def generate_motion_sequence(device, segment_data, partner_segment_data, chunk_f
     final_amount_of_tokens = segment_data.aligned_pose.shape[0] // downsample_factor
     generated_tokens = torch.full((batch_size, final_amount_of_tokens, downsample_factor), code_dim, dtype=torch.long, device=device) # [1, 16, 4] for example
     chunk_codes = (chunk_frames // downsample_factor)
+
+    audio_ratio = 50 / 30
+    audio_chunk_len = math.floor(chunk_frames * audio_ratio)
+
     # Prepare the features
     segment_data.aligned_wav2vec_audio = torch.from_numpy(segment_data.aligned_wav2vec_audio).float().to(device)
     segment_data.personality_vector = torch.from_numpy(segment_data.personality_vector).float().to(device)
@@ -171,7 +175,7 @@ def generate_motion_sequence(device, segment_data, partner_segment_data, chunk_f
             generated_tokens[:, 0:chunk_codes, :] = encoded_tokens
         else:
             for j in range(1, chunk_codes):
-                audio_input = segment_data.aligned_wav2vec_audio[0:chunk_frames].unsqueeze(0)
+                audio_input = segment_data.aligned_wav2vec_audio[0:audio_chunk_len].unsqueeze(0)
                 
                 # Slice the 15-token input context window (unpredicted tokens remain masked as code_dim)
                 tokens_input = generated_tokens[:, 0:chunk_codes - 1, :]
@@ -209,11 +213,14 @@ def generate_motion_sequence(device, segment_data, partner_segment_data, chunk_f
             start_frame = i * stride
             end_frame = start_frame + chunk_frames
 
+            audio_start = int(start_frame * audio_ratio)
+            audio_end = audio_start + audio_chunk_len
+
             # Slice exactly 15 tokens for the input window to match training shapes
             start_token = start_frame // downsample_factor
             end_token = start_token + chunk_codes - 1
             tokens_input = generated_tokens[:, start_token:end_token, :]
-            audio_input = segment_data.aligned_wav2vec_audio[start_frame:end_frame].unsqueeze(0) # Unsqueeze to add batch dimension
+            audio_input = segment_data.aligned_wav2vec_audio[audio_start:audio_end].unsqueeze(0) # Unsqueeze to add batch dimension
 
             base_logits, _, features, cross_attention_condition = model(
                 motion_tokens=tokens_input,
