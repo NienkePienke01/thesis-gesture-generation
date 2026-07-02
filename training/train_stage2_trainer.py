@@ -187,8 +187,7 @@ def train_model(rank, gpu_amount_size, shared_port, args):
                     "--chunk_frames", str(chunk),
                     "--max_gb", str(eval_args.max_gb),
                     "--device", "cuda",
-                    "--output_dir", str(explicit_lmdb_path),
-                    "--max_interactions", str(5)
+                    "--output_dir", str(explicit_lmdb_path)
                 ]
                 subprocess.run(infer_cmd, check=True)
                 
