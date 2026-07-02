@@ -295,6 +295,7 @@ class SeamlessStage2Trainer:
             cond_drop_prob=0.0,
             skip_residuals=True
         )
+        first_pass_logits[..., self.code_dim] = float('-inf') # block mask token
         predicted_layer0 = torch.argmax(first_pass_logits, dim=-1)
 
         simulated_input_tokens = input_tokens.clone()
