@@ -50,5 +50,15 @@
     "loss_weights": {
         "ce_weight": 1.0,
         "mse_weight": 100.0
+    },
+
+    "evaluation":{
+        "test_folder": "data/seamless/downloads/test_set",
+        "segmenter_config": "configs/seamless_segmenter_stage_2.json",
+        "chunk_frames": [300, 900],
+        "max_gb": 100,
+        "eval_cmd_prefix": ["env", "-u", "PYTHONPATH", "-u", "PYTHONHOME", "uv", "run", "python", "-m", "evaluation.eval"],
+        "infer_cmd_prefix": ["env", "-u", "PYTHONPATH", "-u", "PYTHONHOME", "uv", "run", "python", "-m", "evaluation.get_stage_2_results"],
+        "infer_videos_prefix": ["env", "-u", "PYTHONPATH", "-u", "PYTHONHOME", "uv", "run", "python", "-m", "evaluation.render_qualitative_videos"]
     }
 }
