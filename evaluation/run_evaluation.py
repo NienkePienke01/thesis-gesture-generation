@@ -66,7 +66,7 @@ def main():
             "--max_gb", str(getattr(eval_args, "max_gb", 10)),
             "--device", args.device,
             "--output_dir", str(explicit_lmdb_path),
-            "-seed,", eval_args.seed
+            "-seed,", str(eval_args.seed)
         ]
         
         print(f"Executing: {' '.join(infer_cmd)}")
@@ -80,7 +80,7 @@ def main():
             "--results", str(explicit_lmdb_path),
             "--metrics_output", str(explicit_metrics_path),
             "--project_name", project_name,
-             "-seed,", eval_args.seed
+            "-seed,", str(eval_args.seed)
         ]
         
         print(f"Executing: {' '.join(eval_cmd)}")
@@ -98,7 +98,7 @@ def main():
         "--warm_start",
         "--file_ids_txt", eval_args.file_ids,
         "--device", args.device,
-         "-seed,", eval_args.seed
+        "-seed,", str(eval_args.seed)
     ]
     
     print(f"Executing: {' '.join(infer_videos_cmd)}")
