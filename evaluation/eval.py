@@ -21,6 +21,7 @@ import lmdb
 import pickle
 import random
 import evaluation.utils
+from evaluation.utils import set_deterministic_seed
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -30,6 +31,7 @@ R_SHOULDER, R_ELBOW, R_WRIST = 16, 18, 20
 # ------------------------------
 
 def main(args):
+    set_deterministic_seed(args.seed)
     env = lmdb.open(args.results, readonly=True)
     project_name = args.project_name
     
@@ -150,4 +152,5 @@ if __name__ == "__main__":
     parser.add_argument("--results", type=str, required=True)
     parser.add_argument("--metrics_output", type=str, default=None)
     parser.add_argument("--project_name", type=str, default="unknown_project")
+    parser.add_argument("--seed", type=int, default=42)
     main(parser.parse_args())

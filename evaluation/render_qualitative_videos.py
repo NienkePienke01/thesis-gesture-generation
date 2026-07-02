@@ -19,6 +19,7 @@ from visualisation.visualise_stage_2 import (
     _stage2_runtime_cache
 )
 import visualisation.reconstruction_tab_whole_body as stage_1_reconstruction
+from evaluation.utils import set_deterministic_seed
 
 
 def dummy_progress(val, desc=""):
@@ -90,6 +91,7 @@ def generate_person_loader(npz_path, args):
 
 
 def main(args):
+    set_deterministic_seed(args.seed)
     # Gather file IDs
     file_ids = []
     if args.file_ids:
@@ -206,5 +208,6 @@ if __name__ == "__main__":
     parser.add_argument("--top_k", type=int, default=50)
     parser.add_argument("--top_p", type=float, default=0.90)
     parser.add_argument("--warm_start", action="store_true")
+    parser.add_argument("--seed", type=int, default=42)
     
     main(parser.parse_args())

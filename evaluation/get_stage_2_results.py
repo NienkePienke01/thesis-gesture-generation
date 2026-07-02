@@ -21,6 +21,7 @@ from data_processing.seamless_dataset import SeamlessDataset
 import visualisation.reconstruction_tab_whole_body as stage_1_reconstruction
 from visualisation.visualise_stage_2 import sample_top_p_k, generate_motion_sequence, setup_reconstruction, _stage2_runtime_cache, load_stage2_and_stage1_pipeline
 from datetime import datetime
+from evaluation.utils import set_deterministic_seed
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 os.environ['PYOPENGL_PLATFORM'] = 'egl'
@@ -158,6 +159,7 @@ def reconstruct_and_render_for_eval(target_npz_file, device, top_k, top_p, tempe
     return generated_clips
 
 def run_batch_inference(args):
+    set_deterministic_seed(args.seed)
     device = torch.device(args.device)
     
     print("Initializing pipeline...")
@@ -237,6 +239,7 @@ if __name__ == "__main__":
     parser.add_argument("--warm_start", action="store_true")
     parser.add_argument("--max_gb", type=int, default=2) 
     parser.add_argument("--chunk_frames", type=int, default=300) 
-    parser.add_argument("--max_interactions", type=int, default=None, help="Maximum number of interaction files to process.")
+    parser.add_argument("--max_interactions", type=int, default=None, help="Maximum number of interaction files to process."),
+    parser.add_argument("--seed", type=int, default=42)
     
     run_batch_inference(parser.parse_args())

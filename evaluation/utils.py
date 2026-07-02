@@ -10,6 +10,24 @@ from data_processing.utils import get_smplh_model
 from utils import rotation_conversions as rc
 from evaluation.audio_utils import peak_pick
 librosa.util.peak_pick = peak_pick
+import random
+
+def set_deterministic_seed(seed=42):
+    """Locks all random number generators for strict reproducibility."""
+    # Python and Numpy
+    random.seed(seed)
+    np.random.seed(seed)
+    
+    # PyTorch
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed) # For multi-GPU
+        
+    # CuDNN (Forces exact determinism at the cost of slight performance)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
 
 def convert_6d_to_3d(pose_6d: np.ndarray, device='cuda') -> np.ndarray:
     frames = pose_6d.shape[0]
