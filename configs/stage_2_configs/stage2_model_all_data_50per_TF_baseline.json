@@ -1,5 +1,5 @@
 {
-    "project": "stage_2_model_all_data",
+    "project": "stage_2_baseline_model",
     "device": "cuda",
     "gpus": [0, 1, 2, 3],
     "workers_per_gpu": 4,
