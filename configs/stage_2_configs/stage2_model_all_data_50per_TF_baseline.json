@@ -53,6 +53,7 @@
     },
 
     "evaluation":{
+        "seed": 42,
         "test_folder": "data/seamless/downloads/test_set",
         "segmenter_config": "configs/seamless_segmenter_stage_2.json",
         "chunk_frames": [300, 900],
