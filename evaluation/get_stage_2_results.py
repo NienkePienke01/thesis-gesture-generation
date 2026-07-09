@@ -30,13 +30,13 @@ os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 def reconstruct_and_render_for_eval(target_npz_file, device, top_k, top_p, temperature, warm_start, chunk_frames=300):
     # Load the entire sequence
     setup_data = setup_reconstruction(target_npz_file, device, load_vertices=False, max_time=None)
+    print(setup_data)
     if isinstance(setup_data, tuple) and len(setup_data) == 2:
         print("here")
         return []
 
     original_loader, full_segment_data, full_partner_segment_data, relationship = setup_data
     if original_loader.num_frames <= 0:
-        print("no here")
         return []
 
     fps = _stage2_runtime_cache["segmenter"].pose_fps
@@ -55,10 +55,6 @@ def reconstruct_and_render_for_eval(target_npz_file, device, top_k, top_p, tempe
     num_10s_clips = (total_frames - seed_frames) // chunk_frames
     
     generated_clips = []
-
-    print(50*"=")
-    print(num_10s_clips)
-    print(50*"=")
 
     # Process each 10s chunk independently
     for i in range(num_10s_clips):
