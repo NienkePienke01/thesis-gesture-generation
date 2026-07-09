@@ -30,9 +30,7 @@ os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 def reconstruct_and_render_for_eval(target_npz_file, device, top_k, top_p, temperature, warm_start, chunk_frames=300):
     # Load the entire sequence
     setup_data = setup_reconstruction(target_npz_file, device, load_vertices=False, max_time=None)
-    print(setup_data)
     if isinstance(setup_data, tuple) and len(setup_data) == 2:
-        print("here")
         return []
 
     original_loader, full_segment_data, full_partner_segment_data, relationship = setup_data
@@ -164,6 +162,9 @@ def run_batch_inference(args):
     set_deterministic_seed(args.seed)
     device = torch.device(args.device)
     
+    print(50*"=")
+    print("here")
+    print(50*"=")
     print("Initializing pipeline...")
     status = load_stage2_and_stage1_pipeline(
         args.stage2_config, 
