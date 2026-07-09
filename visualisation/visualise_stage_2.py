@@ -142,8 +142,10 @@ def sample_top_p_k(logits, top_k=50, top_p=0.9, temperature=1.0):
 def generate_motion_sequence(device, segment_data, partner_segment_data, chunk_frames, stride, num_chunks, batch_size, temperature=1.0, top_p=0.90, top_k=50, warm_start=False):
     downsample_factor =  _stage2_runtime_cache["stage1_model"].downsample_factor
     code_dim = _stage2_runtime_cache["stage1_model"].categories
-    final_amount_of_tokens = segment_data.aligned_pose.shape[0] // downsample_factor
-    generated_tokens = torch.full((batch_size, final_amount_of_tokens, downsample_factor), code_dim, dtype=torch.long, device=device) # [1, 16, 4] for example
+    
+    num_frames = segment_data.aligned_pose.shape[1] if segment_data.aligned_pose.dim() == 3 else segment_data.aligned_pose.shape[0]
+    final_amount_of_tokens = num_frames // downsample_factor
+    generated_tokens = torch.full((batch_size, final_amount_of_tokens, downsample_factor), code_dim, dtype=torch.long, device=device)
     chunk_codes = (chunk_frames // downsample_factor)
 
     audio_ratio = 50 / 30
@@ -159,7 +161,7 @@ def generate_motion_sequence(device, segment_data, partner_segment_data, chunk_f
     #
     with torch.no_grad():
         model = _stage2_runtime_cache["stage2_model"]
-        generated_tokens[:, 0, :] = torch.randint(0, code_dim, (batch_size, 1, downsample_factor), device=device) # Set the first token to a random seed token
+        generated_tokens[:, 0, :] = torch.randint(0, code_dim, (batch_size, downsample_factor), device=device) # Set the first token to a random seed token
         # Generate the initial 15 frames for the first chunk
         if warm_start:
             # Grab the raw pose for the first 64 frames
@@ -230,7 +232,7 @@ def generate_motion_sequence(device, segment_data, partner_segment_data, chunk_f
             start_token = start_frame // downsample_factor
             end_token = start_token + chunk_codes - 1
             tokens_input = generated_tokens[:, start_token:end_token, :]
-            
+
             if segment_data.aligned_wav2vec_audio.dim() == 2:
                 audio_input = segment_data.aligned_wav2vec_audio[audio_start:audio_end].unsqueeze(0)
             else:
