@@ -152,7 +152,10 @@ def generate_motion_sequence(device, segment_data, partner_segment_data, chunk_f
     # Prepare the features
     segment_data.aligned_wav2vec_audio = torch.from_numpy(segment_data.aligned_wav2vec_audio).float().to(device)
     segment_data.personality_vector = torch.from_numpy(segment_data.personality_vector).float().to(device)
-    personality_input = segment_data.personality_vector.unsqueeze(0)
+    if segment_data.personality_vector.dim() == 1:
+        personality_input = segment_data.personality_vector.unsqueeze(0).expand(batch_size, -1)
+    else:
+        personality_input = segment_data.personality_vector
     #
     with torch.no_grad():
         model = _stage2_runtime_cache["stage2_model"]
@@ -160,7 +163,10 @@ def generate_motion_sequence(device, segment_data, partner_segment_data, chunk_f
         # Generate the initial 15 frames for the first chunk
         if warm_start:
             # Grab the raw pose for the first 64 frames
-            gt_pose_chunk = segment_data.aligned_pose[0:chunk_frames].unsqueeze(0).to(device) # Shape: [1, 64, 129]
+            if segment_data.aligned_pose.dim() == 2:
+                gt_pose_chunk = segment_data.aligned_pose[0:chunk_frames].unsqueeze(0).to(device) # Shape: [b, 64, 129]
+            else:
+                gt_pose_chunk = segment_data.aligned_pose[:, 0:chunk_frames].to(device)
             
             # Reshape and convert to 6D Rotations (43 joints * 6)
             full_body_joint_count = 43
@@ -176,7 +182,10 @@ def generate_motion_sequence(device, segment_data, partner_segment_data, chunk_f
             generated_tokens[:, 0:chunk_codes, :] = encoded_tokens
         else:
             for j in range(1, chunk_codes):
-                audio_input = segment_data.aligned_wav2vec_audio[0:audio_chunk_len].unsqueeze(0)
+                if segment_data.aligned_wav2vec_audio.dim() == 2:
+                    audio_input = segment_data.aligned_wav2vec_audio[0:audio_chunk_len].unsqueeze(0)
+                else:
+                    audio_input = segment_data.aligned_wav2vec_audio[:, 0:audio_chunk_len]
                 
                 # Slice the 15-token input context window (unpredicted tokens remain masked as code_dim)
                 tokens_input = generated_tokens[:, 0:chunk_codes - 1, :]
@@ -221,7 +230,11 @@ def generate_motion_sequence(device, segment_data, partner_segment_data, chunk_f
             start_token = start_frame // downsample_factor
             end_token = start_token + chunk_codes - 1
             tokens_input = generated_tokens[:, start_token:end_token, :]
-            audio_input = segment_data.aligned_wav2vec_audio[audio_start:audio_end].unsqueeze(0) # Unsqueeze to add batch dimension
+            
+            if segment_data.aligned_wav2vec_audio.dim() == 2:
+                audio_input = segment_data.aligned_wav2vec_audio[audio_start:audio_end].unsqueeze(0)
+            else:
+                audio_input = segment_data.aligned_wav2vec_audio[:, audio_start:audio_end]
 
             base_logits, _, features, cross_attention_condition = model(
                 motion_tokens=tokens_input,
