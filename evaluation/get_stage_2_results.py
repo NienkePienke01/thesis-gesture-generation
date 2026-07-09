@@ -11,6 +11,7 @@ import copy
 from pathlib import Path
 from types import SimpleNamespace
 from tqdm import tqdm
+import time
 
 from stage_2_models.autoregressive_transformer import AutoRegressiveMotionTransformer
 from training.stage2_trainer_seamless import load_stage_1_checkpoint
@@ -29,6 +30,7 @@ os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 
 def reconstruct_and_render_for_eval(target_npz_file, device, top_k, top_p, temperature, warm_start, chunk_frames=300):
     # Load the entire sequence
+    start_setup = time.time()
     setup_data = setup_reconstruction(target_npz_file, device, load_vertices=False, max_time=None)
     if isinstance(setup_data, tuple) and len(setup_data) == 2:
         return []
@@ -36,6 +38,8 @@ def reconstruct_and_render_for_eval(target_npz_file, device, top_k, top_p, tempe
     original_loader, full_segment_data, full_partner_segment_data, relationship = setup_data
     if original_loader.num_frames <= 0:
         return []
+    
+    setup_duration = time.time() - start_setup
 
     fps = _stage2_runtime_cache["segmenter"].pose_fps
     audio_hz = _stage2_runtime_cache["segmenter"].audio_hz
@@ -54,6 +58,7 @@ def reconstruct_and_render_for_eval(target_npz_file, device, top_k, top_p, tempe
     
     generated_clips = []
 
+    start_gen = time.time()
     # Process each 10s chunk independently
     for i in range(num_10s_clips):
         # Stride by exactly chunk_frames frames. 
@@ -155,6 +160,11 @@ def reconstruct_and_render_for_eval(target_npz_file, device, top_k, top_p, tempe
             "gt": gt_6d,
             "audio": audio_cropped
         })
+    
+    gen_duration = time.time() - start_gen
+    print(f"\n[PROFILE] File {target_npz_file}:")
+    print(f"    -> Data Setup / Disk Search:  {setup_duration:.2f} seconds")
+    print(f"    -> AR Transformer Generation: {gen_duration:.2f} seconds")
 
     return generated_clips
 
