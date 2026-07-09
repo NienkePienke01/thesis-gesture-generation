@@ -54,6 +54,10 @@ def reconstruct_and_render_for_eval(target_npz_file, device, top_k, top_p, tempe
     
     generated_clips = []
 
+    print(50*"=")
+    print(num_10s_clips)
+    print(50*"=")
+
     # Process each 10s chunk independently
     for i in range(num_10s_clips):
         # Stride by exactly chunk_frames frames. 
@@ -155,8 +159,6 @@ def reconstruct_and_render_for_eval(target_npz_file, device, top_k, top_p, tempe
             "gt": gt_6d,
             "audio": audio_cropped
         })
-    
-    print(generated_clips)
 
     return generated_clips
 
