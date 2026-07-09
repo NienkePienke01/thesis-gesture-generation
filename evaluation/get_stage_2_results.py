@@ -169,9 +169,6 @@ def run_batch_inference(args):
         args.segmenter_config, 
         args.device
     )
-    print(50*"=")
-    print(status)
-    print(50*"=")
 
     print(f"Loading dataset from {args.test_folder}...")
     dataset = SeamlessDataset(args.test_folder)
