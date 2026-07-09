@@ -89,13 +89,14 @@ def reconstruct_and_render_for_eval(target_npz_file, device, top_k, top_p, tempe
         # Generate just this chunk_frames+64-frame chunk
         batch_size = 1
         num_ar_chunks = math.floor((window_frames - ar_chunk_frames) / stride) + 1
-        
-        pose_codes = generate_motion_sequence(
-            device, 
-            isolated_segment, isolated_partner, 
-            ar_chunk_frames, stride, num_ar_chunks, batch_size, 
-            temperature=temperature, top_p=top_p, top_k=top_k, warm_start=warm_start
-        )
+
+        with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+            pose_codes = generate_motion_sequence(
+                device, 
+                isolated_segment, isolated_partner, 
+                ar_chunk_frames, stride, num_ar_chunks, batch_size, 
+                temperature=temperature, top_p=top_p, top_k=top_k, warm_start=warm_start
+            )
 
         # Decode tokens to 6D
         downsample_factor = _stage2_runtime_cache["stage1_model"].downsample_factor
@@ -207,11 +208,10 @@ def run_batch_inference(args):
         if not file_path:
             print(f"Warning: {file_id} missing from mapped samples, skipping.")
             continue
-
-        with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-            generated_clips = reconstruct_and_render_for_eval(
-                    str(file_path), device, args.top_k, args.top_p, args.temperature, args.warm_start, chunk_frames=args.chunk_frames
-                )
+        
+        generated_clips = reconstruct_and_render_for_eval(
+                str(file_path), device, args.top_k, args.top_p, args.temperature, args.warm_start, chunk_frames=args.chunk_frames
+            )
         
         if generated_clips:
             with env.begin(write=True) as transaction:
