@@ -159,15 +159,8 @@ def reconstruct_and_render_for_eval(target_npz_file, device, top_k, top_p, tempe
     return generated_clips
 
 def run_batch_inference(args):
-    print(50*"=")
-    print("here")
-    print(50*"=")
     set_deterministic_seed(args.seed)
     device = torch.device(args.device)
-
-    print(50*"=")
-    print("hereee")
-    print(50*"=")
 
     print("Initializing pipeline...")
     status = load_stage2_and_stage1_pipeline(
@@ -176,7 +169,9 @@ def run_batch_inference(args):
         args.segmenter_config, 
         args.device
     )
+    print(50*"=")
     print(status)
+    print(50*"=")
 
     print(f"Loading dataset from {args.test_folder}...")
     dataset = SeamlessDataset(args.test_folder)
