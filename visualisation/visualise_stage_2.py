@@ -100,9 +100,10 @@ def setup_reconstruction(target_npz_path, device, load_vertices=True, max_time=N
     original_loader = utils.SeamlessSMPLHLoader(target_npz_path, device=device, with_meta_data=True, load_vertices=load_vertices)
     partner_loader = None
     if original_loader.meta_data and original_loader.meta_data.partner_full_id:
-        search_root = Path(target_npz_path).parents[2]
-        disk_map = {path.stem: str(path.absolute()) for path in search_root.rglob("*.npz")}
-        partner_path = disk_map.get(original_loader.meta_data.partner_full_id)
+        if "_disk_map" not in _stage2_runtime_cache:
+            search_root = Path(target_npz_path).parents[2]
+            _stage2_runtime_cache["_disk_map"] = {path.stem: str(path.absolute()) for path in search_root.rglob("*.npz")}
+        partner_path = _stage2_runtime_cache["_disk_map"].get(original_loader.meta_data.partner_full_id)
         if partner_path:
             partner_loader = utils.SeamlessSMPLHLoader(partner_path, device=device, with_meta_data=True, load_vertices=False)
     
