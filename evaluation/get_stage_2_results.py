@@ -207,10 +207,11 @@ def run_batch_inference(args):
         if not file_path:
             print(f"Warning: {file_id} missing from mapped samples, skipping.")
             continue
-        
-        generated_clips = reconstruct_and_render_for_eval(
-                str(file_path), device, args.top_k, args.top_p, args.temperature, args.warm_start, chunk_frames=args.chunk_frames
-            )
+
+        with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+            generated_clips = reconstruct_and_render_for_eval(
+                    str(file_path), device, args.top_k, args.top_p, args.temperature, args.warm_start, chunk_frames=args.chunk_frames
+                )
         
         if generated_clips:
             with env.begin(write=True) as transaction:
