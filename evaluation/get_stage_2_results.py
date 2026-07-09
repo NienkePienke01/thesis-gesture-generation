@@ -155,6 +155,8 @@ def reconstruct_and_render_for_eval(target_npz_file, device, top_k, top_p, tempe
             "gt": gt_6d,
             "audio": audio_cropped
         })
+    
+    print(generated_clips)
 
     return generated_clips
 
