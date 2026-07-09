@@ -31,10 +31,12 @@ def reconstruct_and_render_for_eval(target_npz_file, device, top_k, top_p, tempe
     # Load the entire sequence
     setup_data = setup_reconstruction(target_npz_file, device, load_vertices=False, max_time=None)
     if isinstance(setup_data, tuple) and len(setup_data) == 2:
+        print("here")
         return []
 
     original_loader, full_segment_data, full_partner_segment_data, relationship = setup_data
     if original_loader.num_frames <= 0:
+        print("no here")
         return []
 
     fps = _stage2_runtime_cache["segmenter"].pose_fps
