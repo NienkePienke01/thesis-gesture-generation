@@ -12,10 +12,8 @@
     },
 
     "data": {
-        "train_lmdb_": "cache/training_data/training_data_stage_2_full/training_data_stage_2_full_train",
-        "val_lmdb_": "cache/training_data/training_data_stage_2_full/training_data_stage_2_full_val",
-        "train_lmdb": "cache/training_data/training_data_stage_2_full/training_data_stage_2_full_train",
-        "val_lmdb": "cache/training_data/training_data_stage_2_full/training_data_stage_2_full_val"
+        "train_lmdb": "cache/training_data/stage_2_data_speaker_only/stage_2_data_speaker_only_train",
+        "val_lmdb": "cache/training_data/stage_2_data_speaker_only/stage_2_data_speaker_only_val"
     },
 
     "model_params": {
@@ -55,7 +53,7 @@
     "evaluation":{
         "seed": 42,
         "test_folder": "data/seamless/downloads/test_set",
-        "segmenter_config": "configs/seamless_segmenter_stage_2.json",
+        "segmenter_config": "configs/seamless_segmenter_stage_2_speaker_only.json",
         "chunk_frames": [300, 900],
         "max_gb": 100,
         "eval_cmd_prefix": ["env", "-u", "PYTHONPATH", "-u", "PYTHONHOME", "uv", "run", "python", "-m", "evaluation.eval"],
