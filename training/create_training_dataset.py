@@ -90,11 +90,11 @@ def split_source(args):
                 # keys_to_exclude = {"raw_audio", "hubert_audio", "sample_word", "sample_sentence", "file_path", 
                 #                    "semantic_scores", "partner_raw_audio", "partner_hubert_audio", "partner_pose", "partner_bert"
                 #                    }
-                keys_to_exclude = {}
+                # keys_to_exclude = {}
 
                 # Dynamically determine what to keep using the very first index BEFORE the main loop
                 sample_entry = pickle.loads(src_txn.get(f"{train_indices[0]:08d}".encode("ascii")))
-                keys_to_keep = set(sample_entry.keys()) - keys_to_exclude
+                keys_to_keep = set(sample_entry.keys()) # - keys_to_exclude
 
                 # Write Train portion
                 with train_env.begin(write=True) as t_txn:
