@@ -124,10 +124,12 @@ class SeamlessSegmenter:
                 if loader.meta_data.relationship_detail is None and self.relationship_detail_mandatory:
                     logger.warning(f"No relationship_detail found for {interaction_idx}")
                     continue
-                detail_str = str(loader.meta_data.relationship_detail).lower().strip()
             else:
                 loader = self.dataset.get_interaction(self.dataset.file_ids[interaction_idx], {'load_vertices': False, 'with_meta_data': True})
+            
+            detail_str = str(loader.meta_data.relationship_detail).lower().strip()
             relationship_id = relationship_detail_map.get(detail_str, 0)
+
             loader_data = self._get_loader_segmentation_data(loader, partner_loader)
             # Get the correct amount of subdivisions for this interaction
             loop_subdivisions = loader_data.num_subdivisions
