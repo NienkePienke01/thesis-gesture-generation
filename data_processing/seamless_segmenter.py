@@ -210,15 +210,15 @@ class SeamlessSegmenter:
                         "seamless_id": loader.meta_data.full_id, # video/file ID
                         "file_path": loader.path, # the path this file came from
                     }
+                    entry["personality_traits"] = loader_data.personality_vector
+                    entry["conversation_states"] = loader_data.aligned_conversation_states[pose_start:pose_end]
+                    entry["social_relationship"] = relationship_id
                     if self.include_stage_2_partner_data:
                         entry["partner_seamless_id"] = loader.meta_data.partner_full_id
                         entry["partner_raw_audio"] = partner_loader_data.aligned_raw_audio[raw_audio_start:raw_audio_end]
                         entry["partner_wav2vec_audio"] = partner_loader_data.aligned_wav2vec_audio[audio_start:audio_end]
                         entry["partner_hubert_audio"] = partner_loader_data.aligned_hubert_audio[audio_start:audio_end]
-                        entry["conversation_states"] = loader_data.aligned_conversation_states[pose_start:pose_end]
                         entry["partner_conversation_states"] = partner_loader_data.aligned_conversation_states[pose_start:pose_end]
-                        entry["social_relationship"] = relationship_id
-                        entry["personality_traits"] = loader_data.personality_vector
                         entry["partner_emotions"] = partner_loader_data.aligned_emotion_list[pose_start:pose_end]
                         entry["partner_personality_traits"] = partner_loader_data.personality_vector
                         entry["partner_pose"] = partner_loader_data.aligned_pose[pose_start:pose_end].numpy()
