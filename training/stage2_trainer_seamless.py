@@ -173,8 +173,8 @@ class SeamlessStage2Trainer:
                     bert=dict_data["bert"].to(self.device),
                     emotions=dict_data["emotions"].to(self.device),
                     social = dict_data["social_relationship"].to(self.device) if dict_data.get("social_relationship") is not None else None,
-                    personality=dict_data["personality_traits"].to(self.device),
-                    conversation_state=dict_data["conversation_states"].to(self.device),
+                    personality= dict_data["personality_traits"].to(self.device) if dict_data.get("personality_traits") is not None else None,
+                    conversation_state = dict_data["conversation_states"].to(self.device) if dict_data.get("conversation_states") is not None else None,
                     cond_drop_prob=0.0,
                     skip_residuals=True # only predict layer 0
                 )
@@ -214,8 +214,8 @@ class SeamlessStage2Trainer:
             bert=dict_data["bert"].to(self.device),
             emotions=dict_data["emotions"].to(self.device),
             social = dict_data["social_relationship"].to(self.device) if dict_data.get("social_relationship") is not None else None,
-            personality=dict_data["personality_traits"].to(self.device),
-            conversation_state=dict_data["conversation_states"].to(self.device),
+            personality= dict_data["personality_traits"].to(self.device) if dict_data.get("personality_traits") is not None else None,
+            conversation_state = dict_data["conversation_states"].to(self.device) if dict_data.get("conversation_states") is not None else None,
             cond_drop_prob=self.cfg_drop_prob,
             skip_residuals=False,
             active_layer0_tokens=mixed_active_layer0 # We use predicted tokens and ground truth tokens (a mix)
@@ -290,8 +290,8 @@ class SeamlessStage2Trainer:
             bert=dict_data["bert"].to(self.device),
             emotions=dict_data["emotions"].to(self.device),
             social = dict_data["social_relationship"].to(self.device) if dict_data.get("social_relationship") is not None else None,
-            personality=dict_data["personality_traits"].to(self.device),
-            conversation_state=dict_data["conversation_states"].to(self.device),
+            personality= dict_data["personality_traits"].to(self.device) if dict_data.get("personality_traits") is not None else None,
+            conversation_state = dict_data["conversation_states"].to(self.device) if dict_data.get("conversation_states") is not None else None,
             cond_drop_prob=0.0,
             skip_residuals=True
         )
@@ -310,8 +310,8 @@ class SeamlessStage2Trainer:
             bert=dict_data["bert"].to(self.device),
             emotions=dict_data["emotions"].to(self.device),
             social = dict_data["social_relationship"].to(self.device) if dict_data.get("social_relationship") is not None else None,
-            personality=dict_data["personality_traits"].to(self.device),
-            conversation_state=dict_data["conversation_states"].to(self.device),
+            personality= dict_data["personality_traits"].to(self.device) if dict_data.get("personality_traits") is not None else None,
+            conversation_state = dict_data["conversation_states"].to(self.device) if dict_data.get("conversation_states") is not None else None,
             cond_drop_prob=0.0,
             skip_residuals=False,
             active_layer0_tokens=simulated_active_layer0
