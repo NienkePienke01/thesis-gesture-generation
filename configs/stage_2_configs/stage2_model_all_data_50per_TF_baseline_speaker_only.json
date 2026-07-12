@@ -12,8 +12,8 @@
     },
 
     "data": {
-        "train_lmdb": "cache/training_data/stage_2_data_speaker_only/stage_2_data_speaker_only_train",
-        "val_lmdb": "cache/training_data/stage_2_data_speaker_only/stage_2_data_speaker_only_val"
+        "train_lmdb": "cache/training_data/training_data_stage_2_speaker_only/training_data_stage_2_speaker_only_train",
+        "val_lmdb": "cache/training_data/training_data_stage_2_speaker_only/training_data_stage_2_speaker_only_val"
     },
 
     "model_params": {
