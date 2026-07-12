@@ -169,7 +169,7 @@ class SeamlessStage2Trainer:
                 first_pass_logits, _, _, _ = self.model(
                     motion_tokens=input_tokens,
                     audio=dict_data["wav2vec_audio"].to(self.device),
-                    partner_audio=dict_data["partner_wav2vec_audio"].to(self.device),
+                    partner_audio = dict_data["partner_wav2vec_audio"].to(self.device) if dict_data.get("partner_wav2vec_audio") is not None else None,
                     bert=dict_data["bert"].to(self.device),
                     emotions=dict_data["emotions"].to(self.device),
                     social=dict_data["social_relationship"].to(self.device),
@@ -210,7 +210,7 @@ class SeamlessStage2Trainer:
         logits, _, _, _ = self.model(
             motion_tokens=input_tokens,
             audio=dict_data["wav2vec_audio"].to(self.device), # torch.Size([32, 64, 768])
-            partner_audio=dict_data["partner_wav2vec_audio"].to(self.device),
+            partner_audio = dict_data["partner_wav2vec_audio"].to(self.device) if dict_data.get("partner_wav2vec_audio") is not None else None,
             bert=dict_data["bert"].to(self.device),
             emotions=dict_data["emotions"].to(self.device),
             social=dict_data["social_relationship"].to(self.device),
@@ -286,7 +286,7 @@ class SeamlessStage2Trainer:
         first_pass_logits, _, _, _ = self.model(
             motion_tokens=input_tokens,
             audio=dict_data["wav2vec_audio"].to(self.device),
-            partner_audio=dict_data["partner_wav2vec_audio"].to(self.device),
+            partner_audio = dict_data["partner_wav2vec_audio"].to(self.device) if dict_data.get("partner_wav2vec_audio") is not None else None,
             bert=dict_data["bert"].to(self.device),
             emotions=dict_data["emotions"].to(self.device),
             social=dict_data["social_relationship"].to(self.device),
@@ -306,7 +306,7 @@ class SeamlessStage2Trainer:
         logits, _, _, _ = self.model(
             motion_tokens=simulated_input_tokens,
             audio=dict_data["wav2vec_audio"].to(self.device),
-            partner_audio=dict_data["partner_wav2vec_audio"].to(self.device),
+            partner_audio = dict_data["partner_wav2vec_audio"].to(self.device) if dict_data.get("partner_wav2vec_audio") is not None else None,
             bert=dict_data["bert"].to(self.device),
             emotions=dict_data["emotions"].to(self.device),
             social=dict_data["social_relationship"].to(self.device),
