@@ -1,5 +1,5 @@
 {
-    "project_name": "all_data",
+    "project_name": "all_data_for_results",
     "pose_fps": 30,
     "audio_sr": 16000,
     "pose_length": 64,
@@ -15,5 +15,5 @@
     "_comment": "Can be true or false, This is only relevant for listener segment mode, it will keep only high intensity VAD frames (VAD with movement)",
     "keep_only_high_intensity_blocks": false,
     "__comment": "The VAD padding in seconds, this is to not only grab the VAD section for the speaker mode but also pad it with the build up to the VAD",
-    "vad_padding_in_seconds": 0.0
+    "vad_padding_in_seconds": 1.5
 }
