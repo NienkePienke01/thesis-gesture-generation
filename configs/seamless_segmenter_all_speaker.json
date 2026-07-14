@@ -9,7 +9,7 @@
     "clean_first_seconds": 0,
     "clean_final_seconds": 0,
     "_comment__": "Choose between [both, listening, speaking]",
-    "segment_mode": "both",
+    "segment_mode": "speaking",
     "_comment_": "This can be true or false, and is used to filter out any frames where the hand is out of the screen (noise)",
     "filter_out_of_screen_hands": false,
     "_comment": "Can be true or false, This is only relevant for listener segment mode, it will keep only high intensity VAD frames (VAD with movement)",
