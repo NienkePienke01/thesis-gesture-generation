@@ -15,7 +15,6 @@ dependencies = [
     "loguru>=0.7.3",
     "omegaconf>=2.3.0",
     "open3d>=0.10.0,<0.13.0",
-    "opencv-python>=4.13.0.92",
     "pandas>=2.0.3",
     "pyarrow>=17.0.0",
     "pyrender>=0.1.45",
@@ -29,6 +28,7 @@ dependencies = [
     "ffmpeg-downloader>=0.4.1",
     "av>=12.3.0",
     "imageio-ffmpeg>=0.5.1",
+    "opencv-python-headless>=5.0.0.93",
 ]
 [tool.setuptools.packages.find]
 include = ["data_processing*"]
